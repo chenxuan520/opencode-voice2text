@@ -8,7 +8,6 @@
     "strict": true,
     "declaration": true,
     "sourceMap": true,
-    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,

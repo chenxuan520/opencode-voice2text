@@ -1,4 +1,3 @@
-import "@opentui/solid/runtime-plugin-support"
 /** @jsxImportSource @opentui/solid */
 import { randomBytes, randomUUID } from "node:crypto"
 import { spawn } from "node:child_process"
