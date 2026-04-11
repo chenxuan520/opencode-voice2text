@@ -132,6 +132,8 @@ An example template also lives in `examples/voice2text.local.example.json`.
 
 For the built-in `volcengine` provider, you need to prepare the following values from Volcengine before the plugin can work:
 
+- Volcengine ASR product page: <https://www.volcengine.com/product/asr>
+
 - `providerConfig.appId`
 - `providerConfig.accessToken`
 - `providerConfig.resourceId`
