@@ -22,6 +22,7 @@
   ],
   "files": [
     "dist",
+    "src",
     "README.md",
     "LICENSE"
   ],
@@ -31,7 +32,7 @@
       "import": "./dist/index.js"
     },
     "./tui": {
-      "import": "./dist/index.js",
+      "import": "./src/index.tsx",
       "config": {
         "commandKeybind": "ctrl+g"
       }
