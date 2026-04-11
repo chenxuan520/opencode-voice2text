@@ -769,7 +769,6 @@ function statusView(api: TuiPluginApi) {
 }
 
 const tui: TuiPlugin = async (api, options) => {
-  await ensureRuntimeSupport()
   const config = await loadConfig((options ?? {}) as Voice2TextOptions)
   const provider = getProvider(config)
 
@@ -804,6 +803,8 @@ const tui: TuiPlugin = async (api, options) => {
     setStatus(api, "recording", `listening... press ${config.commandKeybind} to stop`)
 
     try {
+      await ensureRuntimeSupport()
+
       const configError = provider.validateConfig(config)
       if (configError) {
         phase = "idle"
