@@ -59,28 +59,24 @@ opencode plugin opencode-voice2text@latest
 
 ## TUI config
 
-OpenCode's plugin installer manages the server/plugin registration, but this plugin still needs a TUI keybind, so keep this in:
+The installer writes a default TUI plugin entry for you with:
 
-`~/.config/opencode/tui.json`
+- `commandKeybind: "ctrl+s"`
+
+You still need to make sure `terminal_suspend` does not conflict with `Ctrl+S`.
+
+Recommended `~/.config/opencode/tui.json`:
 
 ```json
 {
   "$schema": "https://opencode.ai/tui.json",
   "keybinds": {
     "terminal_suspend": "none"
-  },
-  "plugin": [
-    [
-      "opencode-voice2text",
-      {
-        "commandKeybind": "ctrl+s"
-      }
-    ]
-  ]
+  }
 }
 ```
 
-If you choose a different shortcut, make sure it does not conflict with an existing TUI keybind.
+If you want a different shortcut, edit the generated plugin entry in `tui.json` after installation.
 
 ## Restart OpenCode
 

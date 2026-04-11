@@ -31,7 +31,10 @@
       "import": "./dist/index.js"
     },
     "./tui": {
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "config": {
+        "commandKeybind": "ctrl+s"
+      }
     }
   },
   "scripts": {
