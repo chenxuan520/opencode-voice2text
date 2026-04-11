@@ -4,6 +4,10 @@ Streaming voice input for the OpenCode TUI with a provider-based speech recognit
 
 Press a shortcut once to start recognition, speak naturally while audio streams to Volcengine, and press the shortcut again to stop. Stable text is appended into the current OpenCode prompt while you are still speaking.
 
+## Demo
+
+![demo](https://p9-xtjj-sign.byteimg.com/tos-cn-i-73owjymdk6/4179b924c4ab486f95a8f3c41c688e17~tplv-73owjymdk6-jj-mark-v1:0:0:0:0:5o6Y6YeR5oqA5pyv56S-5Yy6IEAgY2hlbnh1YW41MjA=:q75.awebp?rk3s=f64ab15b&x-expires=1776524057&x-signature=RGZz94OR%2F8wskiW2KswN9vLCtT4%3D)
+
 ## Features
 
 - True start/stop streaming with a single shortcut
