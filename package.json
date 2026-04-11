@@ -1,6 +1,6 @@
 {
   "name": "opencode-voice2text",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Streaming Volcengine speech-to-text plugin for the OpenCode TUI",
   "type": "module",
   "license": "MIT",
