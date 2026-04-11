@@ -61,7 +61,6 @@ opencode plugin opencode-voice2text@latest
 
 The installer writes a default TUI plugin entry for you with:
 
-- `commandKeybind: "ctrl+g"`
 - `commandKeybind: "ctrl+s"`
 
 You still need to make sure `terminal_suspend` does not conflict with your chosen shortcut.
