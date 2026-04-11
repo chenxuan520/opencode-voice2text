@@ -1,4 +1,5 @@
 {
+  "provider": "volcengine",
   "appId": "your-volcengine-app-id",
   "accessToken": "your-volcengine-access-token",
   "resourceId": "volc.seedasr.sauc.duration",

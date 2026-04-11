@@ -90,6 +90,7 @@ Create a local config file on the target machine:
 
 ```json
 {
+  "provider": "volcengine",
   "appId": "your-volcengine-app-id",
   "accessToken": "your-volcengine-access-token",
   "resourceId": "volc.seedasr.sauc.duration",
@@ -122,6 +123,7 @@ export OPENCODE_VOICE2TEXT_APP_ID=...
 export OPENCODE_VOICE2TEXT_ACCESS_TOKEN=...
 export OPENCODE_VOICE2TEXT_RESOURCE_ID=volc.seedasr.sauc.duration
 export OPENCODE_VOICE2TEXT_ENDPOINT=wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async
+export OPENCODE_VOICE2TEXT_PROVIDER=volcengine
 export OPENCODE_VOICE2TEXT_LANGUAGE=zh-CN
 export OPENCODE_VOICE2TEXT_CHUNK_MS=200
 export OPENCODE_VOICE2TEXT_END_WINDOW_SIZE=800
@@ -137,6 +139,7 @@ export OPENCODE_VOICE2TEXT_CHANNELS=1
 You can pass the same runtime options through `tui.json`:
 
 - `commandKeybind`
+- `provider`
 - `endpoint`
 - `appId`
 - `accessToken`
@@ -151,6 +154,15 @@ You can pass the same runtime options through `tui.json`:
 - `channels`
 
 In practice, credentials are best kept in the local config file or environment variables rather than in `tui.json`.
+
+## Provider design
+
+The config is now provider-oriented so more ASR backends can be added later without changing the install shape.
+
+- current provider: `volcengine`
+- future providers can reuse the same plugin entry and TUI behavior
+
+If provider config is missing, pressing the shortcut shows a toast explaining which local config file to fill instead of failing silently.
 
 ## Development
 

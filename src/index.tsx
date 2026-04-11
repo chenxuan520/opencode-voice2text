@@ -38,6 +38,7 @@ const STATUS_MESSAGE_KEY = "opencode_voice2text.status_message"
 
 type Voice2TextOptions = PluginOptions & {
   commandKeybind?: string
+  provider?: string
   endpoint?: string
   appId?: string
   accessToken?: string
@@ -54,10 +55,7 @@ type Voice2TextOptions = PluginOptions & {
 
 type Voice2TextConfig = {
   commandKeybind: string
-  endpoint: string
-  appId: string
-  accessToken: string
-  resourceId: string
+  provider: string
   language: string
   chunkMs: number
   endWindowSize: number
@@ -66,6 +64,23 @@ type Voice2TextConfig = {
   rate: number
   bits: number
   channels: number
+  providerConfig: {
+    endpoint: string
+    appId: string
+    accessToken: string
+    resourceId: string
+  }
+}
+
+type VoiceProvider = {
+  id: string
+  displayName: string
+  configFileFields: string[]
+  validateConfig: (config: Voice2TextConfig) => string | undefined
+  createRecognition: (
+    config: Voice2TextConfig,
+    callbacks: { onStableText?: (text: string) => Promise<void> },
+  ) => Promise<RecognitionSession>
 }
 
 type TranscriptResult = {
@@ -446,6 +461,15 @@ async function readLocalConfig() {
   }
 }
 
+function configPathLabel() {
+  return process.env.OPENCODE_VOICE2TEXT_LOCAL_CONFIG || DEFAULT_CONFIG_PATH
+}
+
+function providerName(provider: string) {
+  if (provider === "volcengine") return "Volcengine ASR"
+  return provider
+}
+
 async function loadConfig(options: Voice2TextOptions = {}): Promise<Voice2TextConfig> {
   const local = await readLocalConfig()
   const env = process.env
@@ -453,10 +477,7 @@ async function loadConfig(options: Voice2TextOptions = {}): Promise<Voice2TextCo
 
   const config: Voice2TextConfig = {
     commandKeybind: str(merged.commandKeybind, "ctrl+s"),
-    endpoint: str(merged.endpoint ?? env.OPENCODE_VOICE2TEXT_ENDPOINT, DEFAULT_ENDPOINT),
-    appId: str(merged.appId ?? env.OPENCODE_VOICE2TEXT_APP_ID),
-    accessToken: str(merged.accessToken ?? env.OPENCODE_VOICE2TEXT_ACCESS_TOKEN),
-    resourceId: str(merged.resourceId ?? env.OPENCODE_VOICE2TEXT_RESOURCE_ID, DEFAULT_RESOURCE_ID),
+    provider: str(merged.provider ?? env.OPENCODE_VOICE2TEXT_PROVIDER, "volcengine"),
     language: str(merged.language ?? env.OPENCODE_VOICE2TEXT_LANGUAGE),
     chunkMs: num(merged.chunkMs ?? env.OPENCODE_VOICE2TEXT_CHUNK_MS, DEFAULT_CHUNK_MS),
     endWindowSize: num(merged.endWindowSize ?? env.OPENCODE_VOICE2TEXT_END_WINDOW_SIZE, DEFAULT_END_WINDOW_SIZE),
@@ -465,14 +486,44 @@ async function loadConfig(options: Voice2TextOptions = {}): Promise<Voice2TextCo
     rate: num(merged.rate ?? env.OPENCODE_VOICE2TEXT_SAMPLE_RATE, DEFAULT_RATE),
     bits: num(merged.bits ?? env.OPENCODE_VOICE2TEXT_BITS, DEFAULT_BITS),
     channels: num(merged.channels ?? env.OPENCODE_VOICE2TEXT_CHANNELS, DEFAULT_CHANNELS),
-  }
-
-  if (!config.appId || !config.accessToken || !config.resourceId) {
-    const configPath = process.env.OPENCODE_VOICE2TEXT_LOCAL_CONFIG || DEFAULT_CONFIG_PATH
-    throw new Error(`Volcengine ASR config is incomplete. Fill ${configPath} first.`)
+    providerConfig: {
+      endpoint: str(merged.endpoint ?? env.OPENCODE_VOICE2TEXT_ENDPOINT, DEFAULT_ENDPOINT),
+      appId: str(merged.appId ?? env.OPENCODE_VOICE2TEXT_APP_ID),
+      accessToken: str(merged.accessToken ?? env.OPENCODE_VOICE2TEXT_ACCESS_TOKEN),
+      resourceId: str(merged.resourceId ?? env.OPENCODE_VOICE2TEXT_RESOURCE_ID, DEFAULT_RESOURCE_ID),
+    },
   }
 
   return config
+}
+
+const volcengineProvider: VoiceProvider = {
+  id: "volcengine",
+  displayName: "Volcengine ASR",
+  configFileFields: ["provider", "appId", "accessToken", "resourceId", "endpoint"],
+  validateConfig(config) {
+    if (!config.providerConfig.appId || !config.providerConfig.accessToken || !config.providerConfig.resourceId) {
+      return `Missing ${this.displayName} config. Fill ${configPathLabel()} with ${this.configFileFields.join(", ")}.`
+    }
+    return undefined
+  },
+  createRecognition(config, callbacks) {
+    return createVolcengineRecognition(config, callbacks)
+  },
+}
+
+const providers: Record<string, VoiceProvider> = {
+  [volcengineProvider.id]: volcengineProvider,
+}
+
+function getProvider(config: Voice2TextConfig): VoiceProvider {
+  const provider = providers[config.provider]
+  if (!provider) {
+    throw new Error(
+      `Unsupported provider '${config.provider}'. Available providers: ${Object.keys(providers).join(", ")}.`,
+    )
+  }
+  return provider
 }
 
 function buildVolcengineRequest(config: Voice2TextConfig) {
@@ -602,14 +653,14 @@ function createRecorder(config: Voice2TextConfig, onChunk: (chunk: Buffer) => Pr
   }
 }
 
-async function createStreamingRecognition(
+async function createVolcengineRecognition(
   config: Voice2TextConfig,
   callbacks: { onStableText?: (text: string) => Promise<void> },
 ): Promise<RecognitionSession> {
-  const client = new WebSocketBinaryClient(config.endpoint, {
-    "X-Api-App-Key": config.appId,
-    "X-Api-Access-Key": config.accessToken,
-    "X-Api-Resource-Id": config.resourceId,
+  const client = new WebSocketBinaryClient(config.providerConfig.endpoint, {
+    "X-Api-App-Key": config.providerConfig.appId,
+    "X-Api-Access-Key": config.providerConfig.accessToken,
+    "X-Api-Resource-Id": config.providerConfig.resourceId,
     "X-Api-Connect-Id": randomUUID(),
   })
 
@@ -720,6 +771,7 @@ function statusView(api: TuiPluginApi) {
 const tui: TuiPlugin = async (api, options) => {
   await ensureRuntimeSupport()
   const config = await loadConfig((options ?? {}) as Voice2TextOptions)
+  const provider = getProvider(config)
 
   let phase: "idle" | "recording" | "transcribing" = "idle"
   let active:
@@ -752,7 +804,15 @@ const tui: TuiPlugin = async (api, options) => {
     setStatus(api, "recording", `listening... press ${config.commandKeybind} to stop`)
 
     try {
-      const stream = await createStreamingRecognition(config, {
+      const configError = provider.validateConfig(config)
+      if (configError) {
+        phase = "idle"
+        setStatus(api, "idle", "")
+        toast(configError, "warning")
+        return
+      }
+
+      const stream = await provider.createRecognition(config, {
         onStableText: async (text) => {
           const next = appendableText(text)
           if (!next) return
@@ -821,7 +881,7 @@ const tui: TuiPlugin = async (api, options) => {
     {
       title: "Toggle voice input",
       value: "voice2text.toggle",
-      description: "Stream microphone audio to Volcengine ASR and append recognized text to the prompt",
+      description: `Stream microphone audio to ${providerName(config.provider)} and append recognized text to the prompt`,
       keybind: config.commandKeybind,
       slash: { name: "voice2text", aliases: ["voice"] },
       hidden: true,
