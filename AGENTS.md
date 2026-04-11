@@ -49,6 +49,19 @@ If package metadata changes, verify:
 - `bugs`
 - published file list from `npm pack --dry-run`
 
+## CI publish flow
+
+- GitHub Actions workflow: `.github/workflows/publish.yml`
+- Trigger: push to `master`
+- CI runs typecheck and build before publish
+- CI only publishes when the current `package.json` version does not already exist on npm
+- CI uses npm trusted publishing via GitHub Actions OIDC
+- Required workflow permission: `id-token: write`
+- Do not commit npm credentials or tokens into the repo
+- Do not add long-lived npm publish tokens to GitHub secrets when trusted publishing is enabled
+
+When preparing a release, bump `package.json` version before pushing to `master`. If the version is unchanged, CI will skip publish.
+
 ## Editing guidance
 
 - Prefer small changes over broad rewrites

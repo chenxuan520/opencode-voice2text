@@ -173,11 +173,57 @@ npm run typecheck
 
 ## Publishing
 
+### Automatic publish from GitHub Actions
+
+This repository now includes `.github/workflows/publish.yml`.
+
+It is configured for npm trusted publishing with GitHub Actions OIDC, so you do not need to store a long-lived `NPM_TOKEN` in GitHub.
+
+Behavior:
+
+- every push to `master` runs typecheck and build
+- the workflow checks whether `package.json`'s current `name@version` already exists on npm
+- if that version is not published yet, it runs `npm publish`
+- if that version already exists, the workflow exits cleanly without failing
+
+Required npm setup:
+
+- add this repository as a trusted publisher for the npm package
+
+On npmjs.com, open the package settings for `opencode-voice2text`, then configure:
+
+- Trusted Publisher
+- provider: GitHub Actions
+- owner: `chenxuan520`
+- repository: `opencode-voice2text`
+- workflow filename: `publish.yml`
+
+Important release rule:
+
+- before pushing to `master`, bump `package.json` version if you want a new npm release
+- if you push code without changing the version, CI will skip publishing because npm versions are immutable
+
+Version bump examples:
+
+```bash
+npm version patch
+```
+
+or:
+
+```bash
+npm version minor
+```
+
+### Manual publish
+
 ```bash
 npm publish
 ```
 
 `prepublishOnly` runs the build automatically.
+
+For emergency manual publishing, use your local npm login or a short-lived bypass-2FA token locally. Do not store long-lived publish tokens in GitHub Actions when trusted publishing is enabled.
 
 ## Notes
 
