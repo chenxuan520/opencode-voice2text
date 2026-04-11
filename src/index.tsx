@@ -1,4 +1,3 @@
-/** @jsxImportSource @opentui/solid */
 import { randomBytes, randomUUID } from "node:crypto"
 import { spawn } from "node:child_process"
 import os from "node:os"
@@ -6,7 +5,6 @@ import path from "node:path"
 import tls from "node:tls"
 import zlib from "node:zlib"
 import { promises as fs } from "node:fs"
-import { Show, createMemo } from "solid-js"
 import type { PluginOptions } from "@opencode-ai/plugin"
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
 
@@ -33,8 +31,7 @@ const DEFAULT_BITS = 16
 const DEFAULT_CHANNELS = 1
 const DEFAULT_END_WINDOW_SIZE = 800
 
-const STATUS_KEY = "opencode_voice2text.status"
-const STATUS_MESSAGE_KEY = "opencode_voice2text.status_message"
+const ACTIVE_TOAST_DURATION = 60 * 60 * 1000
 
 type Voice2TextOptions = PluginOptions & {
   commandKeybind?: string
@@ -737,35 +734,13 @@ async function appendTranscript(api: TuiPluginApi, config: Voice2TextConfig, tex
   await api.client.tui.appendPrompt({ text: nextText })
 }
 
-function setStatus(api: TuiPluginApi, status: string, message: string) {
-  api.kv.set(STATUS_KEY, status)
-  api.kv.set(STATUS_MESSAGE_KEY, message)
-}
-
-function statusView(api: TuiPluginApi) {
-  return () => {
-    const status = createMemo(() => api.kv.get<string>(STATUS_KEY, "idle"))
-    const message = createMemo(() => api.kv.get<string>(STATUS_MESSAGE_KEY, ""))
-    const tone = createMemo(() => {
-      if (status() === "recording") return api.theme.current.warning
-      if (status() === "transcribing") return api.theme.current.accent
-      return api.theme.current.textMuted
-    })
-    const label = createMemo(() => (status() === "recording" ? "REC" : "ASR"))
-
-    return (
-      <Show when={status() !== "idle"}>
-        <box flexDirection="row" gap={1}>
-          <text fg={tone()}>
-            <b>{label()}</b>
-          </text>
-          <Show when={message()}>
-            <text fg={api.theme.current.textMuted}>{message()}</text>
-          </Show>
-        </box>
-      </Show>
-    )
-  }
+function showActiveToast(api: TuiPluginApi, message: string, variant: "info" | "warning" = "info") {
+  api.ui.toast({
+    title: "Voice2Text",
+    message,
+    variant,
+    duration: ACTIVE_TOAST_DURATION,
+  })
 }
 
 const tui: TuiPlugin = async (api, options) => {
@@ -782,16 +757,6 @@ const tui: TuiPlugin = async (api, options) => {
       }
     | undefined
 
-  setStatus(api, "idle", "")
-
-  api.slots.register({
-    order: 50,
-    slots: {
-      home_prompt_right: statusView(api),
-      session_prompt_right: statusView(api),
-    },
-  })
-
   const toast = (message: string, variant: "info" | "warning" | "error" = "info") => {
     api.ui.toast({ title: "Voice2Text", message, variant, duration: 2500 })
   }
@@ -800,7 +765,7 @@ const tui: TuiPlugin = async (api, options) => {
     if (phase !== "idle") return
 
     phase = "recording"
-    setStatus(api, "recording", `listening... press ${config.commandKeybind} to stop`)
+    showActiveToast(api, `Listening... press ${config.commandKeybind} to stop`)
 
     try {
       await ensureRuntimeSupport()
@@ -808,7 +773,6 @@ const tui: TuiPlugin = async (api, options) => {
       const configError = provider.validateConfig(config)
       if (configError) {
         phase = "idle"
-        setStatus(api, "idle", "")
         toast(configError, "warning")
         return
       }
@@ -844,7 +808,6 @@ const tui: TuiPlugin = async (api, options) => {
       active = session
     } catch (error) {
       phase = "idle"
-      setStatus(api, "idle", "")
       toast(error instanceof Error ? error.message : String(error), "error")
     }
   }
@@ -855,7 +818,7 @@ const tui: TuiPlugin = async (api, options) => {
     const current = active
     active = undefined
     phase = "transcribing"
-    setStatus(api, "transcribing", "stopping...")
+    showActiveToast(api, "Stopping recognition...")
 
     try {
       current.recorder.stop()
@@ -874,7 +837,6 @@ const tui: TuiPlugin = async (api, options) => {
       toast(error instanceof Error ? error.message : String(error), "error")
     } finally {
       phase = "idle"
-      setStatus(api, "idle", "")
     }
   }
 
@@ -905,7 +867,6 @@ const tui: TuiPlugin = async (api, options) => {
   api.lifecycle.onDispose(() => {
     active?.recorder.stop()
     void active?.stream.abort().catch(() => undefined)
-    setStatus(api, "idle", "")
   })
 }
 
