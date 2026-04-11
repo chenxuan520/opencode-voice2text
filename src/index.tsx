@@ -31,8 +31,6 @@ const DEFAULT_BITS = 16
 const DEFAULT_CHANNELS = 1
 const DEFAULT_END_WINDOW_SIZE = 800
 
-const ACTIVE_TOAST_DURATION = 60 * 60 * 1000
-
 type Voice2TextOptions = PluginOptions & {
   commandKeybind?: string
   provider?: string
@@ -734,15 +732,6 @@ async function appendTranscript(api: TuiPluginApi, config: Voice2TextConfig, tex
   await api.client.tui.appendPrompt({ text: nextText })
 }
 
-function showActiveToast(api: TuiPluginApi, message: string, variant: "info" | "warning" = "info") {
-  api.ui.toast({
-    title: "Voice2Text",
-    message,
-    variant,
-    duration: ACTIVE_TOAST_DURATION,
-  })
-}
-
 const tui: TuiPlugin = async (api, options) => {
   const config = await loadConfig((options ?? {}) as Voice2TextOptions)
   const provider = getProvider(config)
@@ -765,7 +754,6 @@ const tui: TuiPlugin = async (api, options) => {
     if (phase !== "idle") return
 
     phase = "recording"
-    showActiveToast(api, `Listening... press ${config.commandKeybind} to stop`)
 
     try {
       await ensureRuntimeSupport()
@@ -818,7 +806,6 @@ const tui: TuiPlugin = async (api, options) => {
     const current = active
     active = undefined
     phase = "transcribing"
-    showActiveToast(api, "Stopping recognition...")
 
     try {
       current.recorder.stop()

@@ -8,7 +8,7 @@ Press a shortcut once to start recognition, speak naturally while audio streams 
 
 - True start/stop streaming with a single shortcut
 - Stable utterances appear in the prompt before the session ends
-- Long-duration toast feedback while recording or finalizing
+- Warning/error toast feedback for misconfiguration or failures
 - Works on macOS and Linux
 - Keeps credentials out of the plugin repo
 
@@ -238,5 +238,5 @@ For emergency manual publishing, use your local npm login or a short-lived bypas
 ## Notes
 
 - The plugin uses Volcengine's websocket ASR protocol directly.
-- Success toasts are intentionally not shown; active recording/transcribing uses a long-duration info toast instead.
+- Success toasts are intentionally not shown; only warnings and errors use toast feedback.
 - Errors still surface as OpenCode toasts.
