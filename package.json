@@ -1,0 +1,48 @@
+{
+  "name": "opencode-voice2text",
+  "version": "0.1.0",
+  "description": "Streaming Volcengine speech-to-text plugin for the OpenCode TUI",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chenxuan520/opencode-voice2text.git"
+  },
+  "homepage": "https://github.com/chenxuan520/opencode-voice2text#readme",
+  "bugs": {
+    "url": "https://github.com/chenxuan520/opencode-voice2text/issues"
+  },
+  "keywords": [
+    "opencode",
+    "plugin",
+    "speech-to-text",
+    "voice",
+    "volcengine",
+    "asr"
+  ],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.4.3",
+    "@opentui/solid": "^0.1.97",
+    "solid-js": "^1.9.9"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.9",
+    "typescript": "^5.8.2"
+  }
+}
