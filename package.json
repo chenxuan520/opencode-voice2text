@@ -31,7 +31,6 @@
       "import": "./dist/index.js"
     },
     "./tui": {
-      "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     }
   },
