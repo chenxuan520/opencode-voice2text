@@ -476,7 +476,7 @@ async function loadConfig(options: Voice2TextOptions = {}): Promise<Voice2TextCo
   const merged = { ...local, ...options }
 
   const config: Voice2TextConfig = {
-    commandKeybind: str(merged.commandKeybind, "ctrl+s"),
+    commandKeybind: str(merged.commandKeybind, "ctrl+g"),
     provider: str(merged.provider ?? env.OPENCODE_VOICE2TEXT_PROVIDER, "volcengine"),
     language: str(merged.language ?? env.OPENCODE_VOICE2TEXT_LANGUAGE),
     chunkMs: num(merged.chunkMs ?? env.OPENCODE_VOICE2TEXT_CHUNK_MS, DEFAULT_CHUNK_MS),
@@ -884,7 +884,7 @@ const tui: TuiPlugin = async (api, options) => {
       description: `Stream microphone audio to ${providerName(config.provider)} and append recognized text to the prompt`,
       keybind: config.commandKeybind,
       slash: { name: "voice2text", aliases: ["voice"] },
-      hidden: true,
+      hidden: false,
       onSelect: () => {
         if (phase === "transcribing") {
           toast("Still transcribing the previous recording.", "warning")

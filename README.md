@@ -61,9 +61,9 @@ opencode plugin opencode-voice2text@latest
 
 The installer writes a default TUI plugin entry for you with:
 
-- `commandKeybind: "ctrl+s"`
+- `commandKeybind: "ctrl+g"`
 
-You still need to make sure `terminal_suspend` does not conflict with `Ctrl+S`.
+You still need to make sure `terminal_suspend` does not conflict with your chosen shortcut.
 
 Recommended `~/.config/opencode/tui.json`:
 
@@ -77,6 +77,8 @@ Recommended `~/.config/opencode/tui.json`:
 ```
 
 If you want a different shortcut, edit the generated plugin entry in `tui.json` after installation.
+
+`Ctrl+S` is not the default anymore because many terminals intercept it for XON/XOFF flow control before OpenCode sees it. If you still want `Ctrl+S`, disable terminal flow control in your shell or terminal first, then override `commandKeybind` manually.
 
 ## Restart OpenCode
 
