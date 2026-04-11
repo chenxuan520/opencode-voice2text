@@ -68,3 +68,11 @@ When preparing a release, bump `package.json` version before pushing to `master`
 - Keep the package consumable as a normal npm OpenCode plugin
 - Preserve OpenCode plugin API compatibility
 - If adding dependencies, keep them justified and update README when install or publish behavior changes
+
+## Git commit rules
+
+- Commit messages must be in English
+- Always use a conventional prefix such as `feat:`, `fix:`, `docs:`, `refactor:`, `chore:`
+- Format should be like `feat: add new feature`
+- Keep the message concise, but specific enough to describe the main change
+- When asked to provide a commit command, output a directly executable git command without extra explanation
