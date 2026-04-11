@@ -31,7 +31,7 @@
       "import": "./dist/index.js"
     },
     "./tui": {
-      "import": "./dist/debug.js",
+      "import": "./dist/index.js",
       "config": {
         "commandKeybind": "ctrl+g"
       }
