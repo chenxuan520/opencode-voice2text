@@ -21,6 +21,7 @@ When changing behavior, edit `src/` first and rebuild. Do not hand-edit `dist/`.
 - Stable utterances are appended into the OpenCode prompt while recognition is active
 - The default shortcut is `Ctrl+S`
 - The shortcut is toggle-based, not hold-to-talk, because current OpenCode TUI plugin APIs do not expose key release events
+- The current stable interaction uses a long recording toast and clears it when recognition stops; do not reintroduce TSX prompt-right status without local runtime validation
 
 ## Config rules
 
@@ -28,7 +29,25 @@ When changing behavior, edit `src/` first and rebuild. Do not hand-edit `dist/`.
 - Runtime credentials should come from:
   - `~/.config/opencode/voice2text.local.json`, or
   - `OPENCODE_VOICE2TEXT_*` environment variables
+- Provider-specific credentials should live under `providerConfig`
 - Keep README examples sanitized
+- README must document how to fix `Ctrl+S` terminal flow-control conflicts using `stty -ixon`
+
+Current preferred config shape:
+
+```json
+{
+  "provider": "volcengine",
+  "providerConfig": {
+    "appId": "...",
+    "accessToken": "...",
+    "resourceId": "...",
+    "endpoint": "..."
+  }
+}
+```
+
+Legacy flat fields may still be read for compatibility, but new docs and examples must use `providerConfig`.
 
 ## Release expectations
 
@@ -68,6 +87,8 @@ When preparing a release, bump `package.json` version before pushing to `master`
 - Keep the package consumable as a normal npm OpenCode plugin
 - Preserve OpenCode plugin API compatibility
 - If adding dependencies, keep them justified and update README when install or publish behavior changes
+- Prefer local runtime validation through `~/.config/opencode/tui.json` and `~/.config/opencode/plugins/` before publishing npm versions
+- Keep provider implementations isolated under `src/providers/`
 
 ## Git commit rules
 

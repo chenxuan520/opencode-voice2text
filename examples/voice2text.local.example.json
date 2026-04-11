@@ -1,9 +1,11 @@
 {
   "provider": "volcengine",
-  "appId": "your-volcengine-app-id",
-  "accessToken": "your-volcengine-access-token",
-  "resourceId": "volc.seedasr.sauc.duration",
-  "endpoint": "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async",
+  "providerConfig": {
+    "appId": "your-volcengine-app-id",
+    "accessToken": "your-volcengine-access-token",
+    "resourceId": "volc.seedasr.sauc.duration",
+    "endpoint": "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
+  },
   "language": "zh-CN",
   "chunkMs": 200,
   "endWindowSize": 800,

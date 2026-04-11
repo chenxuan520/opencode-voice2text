@@ -34,7 +34,7 @@
     "./tui": {
       "import": "./dist/index.js",
       "config": {
-        "commandKeybind": "ctrl+g"
+        "commandKeybind": "ctrl+s"
       }
     }
   },
