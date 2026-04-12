@@ -7,7 +7,6 @@ import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plug
 import { getProviderById } from "./providers/index.js"
 import type { RecognitionSession, TranscriptResult, Voice2TextConfig } from "./providers/types.js"
 
-const DEFAULT_CONFIG_PATH = path.join(os.homedir(), ".config/opencode/voice2text.local.json")
 const DEFAULT_CHUNK_MS = 200
 const DEFAULT_RATE = 16000
 const DEFAULT_BITS = 16
@@ -72,29 +71,48 @@ function diffSuffix(previous: string, next: string) {
 function platformLabel() {
   if (process.platform === "darwin") return "macOS"
   if (process.platform === "linux") return "Linux"
+  if (process.platform === "win32") return "Windows"
   return process.platform
+}
+
+function defaultConfigPath() {
+  if (process.platform === "win32") {
+    const appData = process.env.APPDATA
+    if (appData) {
+      return path.join(appData, "opencode", "voice2text.local.json")
+    }
+  }
+
+  return path.join(os.homedir(), ".config", "opencode", "voice2text.local.json")
+}
+
+function recorderCommand() {
+  return process.platform === "win32" ? "sox" : "rec"
 }
 
 function installHint() {
   if (process.platform === "darwin") return "Missing recorder 'rec'. Install Sox with: brew install sox"
   if (process.platform === "linux") return "Missing recorder 'rec'. Install Sox with: sudo apt install sox"
-  return "Missing recorder 'rec'. Install Sox before using voice input."
+  if (process.platform === "win32") {
+    return "Missing recorder 'sox'. Install SoX for Windows from https://sourceforge.net/projects/sox/ and ensure sox.exe is in PATH"
+  }
+  return `Missing recorder '${recorderCommand()}'. Install Sox before using voice input.`
 }
 
 async function commandExists(command: string) {
   return new Promise<boolean>((resolve) => {
-    const child = spawn("which", [command], { stdio: "ignore" })
+    const child = spawn(process.platform === "win32" ? "where" : "which", [command], { stdio: "ignore", windowsHide: true })
     child.on("close", (code) => resolve(code === 0))
     child.on("error", () => resolve(false))
   })
 }
 
 async function ensureRuntimeSupport() {
-  if (process.platform !== "darwin" && process.platform !== "linux") {
-    throw new Error(`opencode-voice2text currently supports macOS and Linux. Current platform: ${platformLabel()}`)
+  if (process.platform !== "darwin" && process.platform !== "linux" && process.platform !== "win32") {
+    throw new Error(`opencode-voice2text currently supports macOS, Linux, and Windows. Current platform: ${platformLabel()}`)
   }
 
-  if (!(await commandExists("rec"))) {
+  if (!(await commandExists(recorderCommand()))) {
     throw new Error(installHint())
   }
 }
@@ -125,7 +143,7 @@ function buildLegacyProviderConfig(merged: Record<string, unknown>, env: NodeJS.
 }
 
 async function loadConfig(options: Voice2TextOptions = {}): Promise<Voice2TextConfig> {
-  const configPath = process.env.OPENCODE_VOICE2TEXT_LOCAL_CONFIG || DEFAULT_CONFIG_PATH
+  const configPath = process.env.OPENCODE_VOICE2TEXT_LOCAL_CONFIG || defaultConfigPath()
   const local = await readLocalConfig(configPath)
   const env = process.env
   const merged = { ...local, ...options }
@@ -154,23 +172,45 @@ async function loadConfig(options: Voice2TextOptions = {}): Promise<Voice2TextCo
 }
 
 function createRecorder(config: Voice2TextConfig, onChunk: (chunk: Buffer) => Promise<void> | void): RecorderSession {
+  const command = recorderCommand()
+  const args =
+    process.platform === "win32"
+      ? [
+          "-q",
+          "-t",
+          "waveaudio",
+          "default",
+          "-t",
+          "raw",
+          "-r",
+          String(config.rate),
+          "-c",
+          String(config.channels),
+          "-b",
+          String(config.bits),
+          "-e",
+          "signed-integer",
+          "-",
+        ]
+      : [
+          "-q",
+          "-t",
+          "raw",
+          "-r",
+          String(config.rate),
+          "-c",
+          String(config.channels),
+          "-b",
+          String(config.bits),
+          "-e",
+          "signed-integer",
+          "-",
+        ]
+
   const child = spawn(
-    "rec",
-    [
-      "-q",
-      "-t",
-      "raw",
-      "-r",
-      String(config.rate),
-      "-c",
-      String(config.channels),
-      "-b",
-      String(config.bits),
-      "-e",
-      "signed-integer",
-      "-",
-    ],
-    { stdio: ["ignore", "pipe", "pipe"] },
+    command,
+    args,
+    { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
   )
 
   let stderr = ""
@@ -187,7 +227,7 @@ function createRecorder(config: Voice2TextConfig, onChunk: (chunk: Buffer) => Pr
       } catch (error) {
         streamError = error instanceof Error ? error : new Error(String(error))
         stopRequested = true
-        child.kill("SIGINT")
+        child.kill(process.platform === "win32" ? undefined : "SIGINT")
       }
     })
   })
@@ -198,7 +238,7 @@ function createRecorder(config: Voice2TextConfig, onChunk: (chunk: Buffer) => Pr
 
   const timer = setTimeout(() => {
     stopRequested = true
-    child.kill("SIGINT")
+    child.kill(process.platform === "win32" ? undefined : "SIGINT")
   }, config.maxDurationSeconds * 1000)
 
   const done = new Promise<void>((resolve, reject) => {
@@ -218,7 +258,7 @@ function createRecorder(config: Voice2TextConfig, onChunk: (chunk: Buffer) => Pr
         return
       }
 
-      if (code === 0 || signal === "SIGINT" || stopRequested) {
+      if (code === 0 || signal === "SIGINT" || signal === "SIGTERM" || stopRequested) {
         resolve()
         return
       }
@@ -232,7 +272,7 @@ function createRecorder(config: Voice2TextConfig, onChunk: (chunk: Buffer) => Pr
     stop() {
       if (finished || child.killed) return
       stopRequested = true
-      child.kill("SIGINT")
+      child.kill(process.platform === "win32" ? undefined : "SIGINT")
     },
   }
 }

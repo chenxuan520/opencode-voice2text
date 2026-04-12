@@ -1,8 +1,10 @@
 # opencode-voice2text
 
-Streaming voice input for the OpenCode TUI with a provider-based speech recognition architecture. The current built-in provider is Volcengine ASR.
+[中文文档](./README.zh-CN.md)
 
-Press a shortcut once to start recognition, speak naturally while audio streams to Volcengine, and press the shortcut again to stop. Stable text is appended into the current OpenCode prompt while you are still speaking.
+This is a streaming voice input plugin for the OpenCode TUI with a provider-based speech recognition architecture. The current built-in provider is Volcengine ASR.
+
+Press the shortcut once to start recognition. While you speak naturally, audio is streamed continuously to Volcengine. Press the shortcut again to stop recognition. Stable recognized text is appended continuously into the current OpenCode input while you are still speaking.
 
 ## Demo
 
@@ -10,8 +12,8 @@ Press a shortcut once to start recognition, speak naturally while audio streams 
 
 ## Features
 
-- True start/stop streaming with a single shortcut
-- Stable utterances appear in the prompt before the session ends
+- Start and stop streaming recognition with a single shortcut
+- Stable recognition results are appended to the input before the session ends
 - Warning/error toast feedback for misconfiguration or failures
 - Works on macOS and Linux
 - Keeps credentials out of the plugin repo
@@ -19,19 +21,19 @@ Press a shortcut once to start recognition, speak naturally while audio streams 
 ## Behavior
 
 - First `Ctrl+S`: start microphone capture and streaming recognition
-- While speaking: stable recognized text is appended to the current prompt
-- Second `Ctrl+S`: stop capture, flush the final ASR result, append the remaining tail text
-- A long recording toast stays visible while recording and disappears when recognition stops
+- While speaking: stable recognized text is appended continuously to the current prompt
+- Second `Ctrl+S`: stop capture, wait for the final ASR result, then append the remaining tail text
+- A persistent recording toast stays visible while recording and disappears automatically when recognition stops
 
 ## Why this is toggle-based
 
-OpenCode's current TUI plugin API exposes keybind matching, but not key release events. That means true press-and-hold / release-to-stop behavior is not reliable in a plugin today.
+OpenCode's current TUI plugin API supports keybind matching, but it does not expose key release events yet. That means truly reliable "hold to record / release to stop" behavior is not possible in a plugin right now.
 
 ## Requirements
 
 - OpenCode with TUI plugin support
 - Provider credentials for your selected ASR backend
-- `rec` from Sox installed locally
+- Sox installed locally (`rec` on macOS/Linux, `sox.exe` on Windows)
 
 macOS:
 
@@ -43,6 +45,16 @@ Ubuntu/Debian:
 
 ```bash
 sudo apt install sox
+```
+
+Windows:
+
+1. Download and install SoX from <https://sourceforge.net/projects/sox/>
+2. Make sure `sox.exe` is available in `PATH`
+3. Verify the install:
+
+```powershell
+sox --version
 ```
 
 ## Install
@@ -100,6 +112,8 @@ Add `stty -ixon` to `~/.bashrc` or `~/.bash_profile`, then restart the terminal.
 
 If you still prefer not to change terminal flow control, override `commandKeybind` manually in `tui.json`.
 
+Windows terminals do not use the same `Ctrl+S` XON/XOFF flow control behavior, so the `stty -ixon` fix is only relevant on macOS/Linux shells.
+
 ## Restart OpenCode
 
 If OpenCode is already running, restart it so the plugin and dependency tree are loaded again.
@@ -108,7 +122,13 @@ If OpenCode is already running, restart it so the plugin and dependency tree are
 
 Create a local config file on the target machine:
 
+macOS/Linux:
+
 `~/.config/opencode/voice2text.local.json`
+
+Windows:
+
+`%APPDATA%\opencode\voice2text.local.json`
 
 ```json
 {
@@ -145,11 +165,17 @@ For the built-in `volcengine` provider, you need to prepare the following values
 
 Typical setup flow:
 
-1. Log in to the Volcengine console.
-2. Open the speech recognition / ASR product page.
-3. Create or select an application for realtime or streaming ASR.
-4. Locate the application's credential information.
-5. Copy the values into `~/.config/opencode/voice2text.local.json`.
+1. Open the [Volcengine ASR page](https://www.volcengine.com/product/asr), sign in to the Volcengine console, or register first if you do not already have an account. Then open the speech recognition / ASR service page.
+![image.png](https://img.011203.dpdns.org/file/1775972577499_image.png)
+
+2. Create or select an application.
+![image.png](https://img.011203.dpdns.org/file/1775972583608_image.png)
+
+3. Get the credentials and resource settings for that application.
+![image.png](https://img.011203.dpdns.org/file/1775972594458_image.png)
+
+4. Fill the values into your local `voice2text.local.json`. On macOS/Linux the default path is `~/.config/opencode/voice2text.local.json`. On Windows the default path is `%APPDATA%\opencode\voice2text.local.json`. For `resourceId`, check the [Big Model Streaming Speech Recognition API docs](https://www.volcengine.com/docs/6561/1354869?lang=zh). The recommended value is `volc.seedasr.sauc.duration`. For `endpoint`, use `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async`.
+![image.png](https://img.011203.dpdns.org/file/1775972606968_image.png)
 
 For this plugin's current Volcengine implementation:
 
