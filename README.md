@@ -8,7 +8,7 @@ Press the shortcut once to start recognition. While you speak naturally, audio i
 
 ## Demo
 
-![demo](https://p9-xtjj-sign.byteimg.com/tos-cn-i-73owjymdk6/4179b924c4ab486f95a8f3c41c688e17~tplv-73owjymdk6-jj-mark-v1:0:0:0:0:5o6Y6YeR5oqA5pyv56S-5Yy6IEAgY2hlbnh1YW41MjA=:q75.awebp?rk3s=f64ab15b&x-expires=1776524057&x-signature=RGZz94OR%2F8wskiW2KswN9vLCtT4%3D)
+![demo](http://cdn.androidftp.top/test/202605516135051m6ecth.url)
 
 ## Features
 
