@@ -1,281 +1,20 @@
-import { spawn } from "node:child_process"
-import os from "node:os"
-import path from "node:path"
-import { promises as fs } from "node:fs"
 import type { PluginOptions } from "@opencode-ai/plugin"
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
-import { getProviderById } from "./providers/index.js"
-import type { RecognitionSession, TranscriptResult, Voice2TextConfig } from "./providers/types.js"
+import type { TranscriptResult, Voice2TextConfig } from "./providers/types.js"
+import {
+  appendableText,
+  createRuntimeConfig,
+  diffSuffix,
+  ensureRuntimeSupport,
+  loadConfig,
+  startVoiceRecognition,
+  type Voice2TextOptions as RuntimeVoice2TextOptions,
+  type VoiceRecognitionRun,
+} from "./runtime.js"
 
-const DEFAULT_CHUNK_MS = 200
-const DEFAULT_RATE = 16000
-const DEFAULT_BITS = 16
-const DEFAULT_CHANNELS = 1
-const DEFAULT_END_WINDOW_SIZE = 800
 const RECORDING_TOAST_DURATION = 60 * 60 * 1000
 
-type Voice2TextOptions = PluginOptions & {
-  commandKeybind?: string
-  provider?: string
-  providerConfig?: Record<string, unknown>
-  endpoint?: string
-  appId?: string
-  accessToken?: string
-  resourceId?: string
-  language?: string
-  chunkMs?: number
-  endWindowSize?: number
-  maxDurationSeconds?: number
-  appendTrailingSpace?: boolean
-  rate?: number
-  bits?: number
-  channels?: number
-}
-
-type RecorderSession = {
-  done: Promise<void>
-  stop: () => void
-}
-
-function str(value: unknown, fallback = "") {
-  return typeof value === "string" && value.trim() ? value.trim() : fallback
-}
-
-function num(value: unknown, fallback: number) {
-  const parsed = Number(value)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
-}
-
-function bool(value: unknown, fallback: boolean) {
-  if (typeof value === "boolean") return value
-  if (value === "true") return true
-  if (value === "false") return false
-  return fallback
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
-function appendableText(text: unknown) {
-  return typeof text === "string" ? text.trim() : ""
-}
-
-function diffSuffix(previous: string, next: string) {
-  if (!next) return ""
-  if (!previous) return next
-  if (next.startsWith(previous)) return next.slice(previous.length).trim()
-  return ""
-}
-
-function platformLabel() {
-  if (process.platform === "darwin") return "macOS"
-  if (process.platform === "linux") return "Linux"
-  if (process.platform === "win32") return "Windows"
-  return process.platform
-}
-
-function defaultConfigPath() {
-  if (process.platform === "win32") {
-    const appData = process.env.APPDATA
-    if (appData) {
-      return path.join(appData, "opencode", "voice2text.local.json")
-    }
-  }
-
-  return path.join(os.homedir(), ".config", "opencode", "voice2text.local.json")
-}
-
-function recorderCommand() {
-  return process.platform === "win32" ? "sox" : "rec"
-}
-
-function installHint() {
-  if (process.platform === "darwin") return "Missing recorder 'rec'. Install Sox with: brew install sox"
-  if (process.platform === "linux") return "Missing recorder 'rec'. Install Sox with: sudo apt install sox"
-  if (process.platform === "win32") {
-    return "Missing recorder 'sox'. Install SoX for Windows from https://sourceforge.net/projects/sox/ and ensure sox.exe is in PATH"
-  }
-  return `Missing recorder '${recorderCommand()}'. Install Sox before using voice input.`
-}
-
-async function commandExists(command: string) {
-  return new Promise<boolean>((resolve) => {
-    const child = spawn(process.platform === "win32" ? "where" : "which", [command], { stdio: "ignore", windowsHide: true })
-    child.on("close", (code) => resolve(code === 0))
-    child.on("error", () => resolve(false))
-  })
-}
-
-async function ensureRuntimeSupport() {
-  if (process.platform !== "darwin" && process.platform !== "linux" && process.platform !== "win32") {
-    throw new Error(`opencode-voice2text currently supports macOS, Linux, and Windows. Current platform: ${platformLabel()}`)
-  }
-
-  if (!(await commandExists(recorderCommand()))) {
-    throw new Error(installHint())
-  }
-}
-
-async function readLocalConfig(configPath: string) {
-  try {
-    return JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>
-  } catch (error: any) {
-    if (error?.code === "ENOENT") return {}
-    throw error
-  }
-}
-
-function buildLegacyProviderConfig(merged: Record<string, unknown>, env: NodeJS.ProcessEnv) {
-  const providerConfig: Record<string, unknown> = {}
-
-  const endpoint = str(merged.endpoint ?? env.OPENCODE_VOICE2TEXT_ENDPOINT)
-  const appId = str(merged.appId ?? env.OPENCODE_VOICE2TEXT_APP_ID)
-  const accessToken = str(merged.accessToken ?? env.OPENCODE_VOICE2TEXT_ACCESS_TOKEN)
-  const resourceId = str(merged.resourceId ?? env.OPENCODE_VOICE2TEXT_RESOURCE_ID)
-
-  if (endpoint) providerConfig.endpoint = endpoint
-  if (appId) providerConfig.appId = appId
-  if (accessToken) providerConfig.accessToken = accessToken
-  if (resourceId) providerConfig.resourceId = resourceId
-
-  return providerConfig
-}
-
-async function loadConfig(options: Voice2TextOptions = {}): Promise<Voice2TextConfig> {
-  const configPath = process.env.OPENCODE_VOICE2TEXT_LOCAL_CONFIG || defaultConfigPath()
-  const local = await readLocalConfig(configPath)
-  const env = process.env
-  const merged = { ...local, ...options }
-  const nestedProviderConfig = {
-    ...(isRecord(local.providerConfig) ? local.providerConfig : {}),
-    ...(isRecord(options.providerConfig) ? options.providerConfig : {}),
-  }
-
-  return {
-    configPath,
-    commandKeybind: str(merged.commandKeybind, "ctrl+s"),
-    provider: str(merged.provider ?? env.OPENCODE_VOICE2TEXT_PROVIDER, "volcengine"),
-    language: str(merged.language ?? env.OPENCODE_VOICE2TEXT_LANGUAGE),
-    chunkMs: num(merged.chunkMs ?? env.OPENCODE_VOICE2TEXT_CHUNK_MS, DEFAULT_CHUNK_MS),
-    endWindowSize: num(merged.endWindowSize ?? env.OPENCODE_VOICE2TEXT_END_WINDOW_SIZE, DEFAULT_END_WINDOW_SIZE),
-    maxDurationSeconds: num(merged.maxDurationSeconds ?? env.OPENCODE_VOICE2TEXT_MAX_DURATION_SECONDS, 180),
-    appendTrailingSpace: bool(merged.appendTrailingSpace ?? env.OPENCODE_VOICE2TEXT_APPEND_TRAILING_SPACE, true),
-    rate: num(merged.rate ?? env.OPENCODE_VOICE2TEXT_SAMPLE_RATE, DEFAULT_RATE),
-    bits: num(merged.bits ?? env.OPENCODE_VOICE2TEXT_BITS, DEFAULT_BITS),
-    channels: num(merged.channels ?? env.OPENCODE_VOICE2TEXT_CHANNELS, DEFAULT_CHANNELS),
-    providerConfig: {
-      ...nestedProviderConfig,
-      ...buildLegacyProviderConfig(merged, env),
-    },
-  }
-}
-
-function createRecorder(config: Voice2TextConfig, onChunk: (chunk: Buffer) => Promise<void> | void): RecorderSession {
-  const command = recorderCommand()
-  const args =
-    process.platform === "win32"
-      ? [
-          "-q",
-          "-t",
-          "waveaudio",
-          "default",
-          "-t",
-          "raw",
-          "-r",
-          String(config.rate),
-          "-c",
-          String(config.channels),
-          "-b",
-          String(config.bits),
-          "-e",
-          "signed-integer",
-          "-",
-        ]
-      : [
-          "-q",
-          "-t",
-          "raw",
-          "-r",
-          String(config.rate),
-          "-c",
-          String(config.channels),
-          "-b",
-          String(config.bits),
-          "-e",
-          "signed-integer",
-          "-",
-        ]
-
-  const child = spawn(
-    command,
-    args,
-    { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
-  )
-
-  let stderr = ""
-  let stopRequested = false
-  let finished = false
-  let streamError: Error | undefined
-  let writeChain = Promise.resolve()
-
-  child.stdout?.on("data", (chunk: Buffer) => {
-    writeChain = writeChain.then(async () => {
-      if (streamError) return
-      try {
-        await onChunk(chunk)
-      } catch (error) {
-        streamError = error instanceof Error ? error : new Error(String(error))
-        stopRequested = true
-        child.kill(process.platform === "win32" ? undefined : "SIGINT")
-      }
-    })
-  })
-
-  child.stderr?.on("data", (chunk) => {
-    stderr += chunk.toString()
-  })
-
-  const timer = setTimeout(() => {
-    stopRequested = true
-    child.kill(process.platform === "win32" ? undefined : "SIGINT")
-  }, config.maxDurationSeconds * 1000)
-
-  const done = new Promise<void>((resolve, reject) => {
-    child.on("error", (error: NodeJS.ErrnoException) => {
-      clearTimeout(timer)
-      finished = true
-      reject(error?.code === "ENOENT" ? new Error(installHint()) : error)
-    })
-
-    child.on("close", async (code, signal) => {
-      clearTimeout(timer)
-      finished = true
-      await writeChain
-
-      if (streamError) {
-        reject(streamError)
-        return
-      }
-
-      if (code === 0 || signal === "SIGINT" || signal === "SIGTERM" || stopRequested) {
-        resolve()
-        return
-      }
-
-      reject(new Error(stderr.trim() || `Recording failed with code ${code ?? "unknown"}`))
-    })
-  })
-
-  return {
-    done,
-    stop() {
-      if (finished || child.killed) return
-      stopRequested = true
-      child.kill(process.platform === "win32" ? undefined : "SIGINT")
-    },
-  }
-}
+type Voice2TextOptions = PluginOptions & RuntimeVoice2TextOptions
 
 async function appendTranscript(api: TuiPluginApi, config: Voice2TextConfig, text: string) {
   const nextText = config.appendTrailingSpace ? `${text} ` : text
@@ -304,30 +43,19 @@ const tui: TuiPlugin = async (api, options) => {
   const baseConfig = await loadConfig((options ?? {}) as Voice2TextOptions)
 
   let providerError = ""
-  let provider = undefined
+  let runtime: ReturnType<typeof createRuntimeConfig> | undefined
 
   try {
-    provider = getProviderById(baseConfig.provider)
+    runtime = createRuntimeConfig(baseConfig)
   } catch (error) {
     providerError = error instanceof Error ? error.message : String(error)
   }
 
-  const config = provider
-    ? {
-        ...baseConfig,
-        providerConfig: provider.normalizeConfig(baseConfig.providerConfig),
-      }
-    : baseConfig
+  const config = runtime?.config ?? baseConfig
+  const provider = runtime?.provider
 
   let phase: "idle" | "recording" | "transcribing" = "idle"
-  let active:
-    | {
-        recorder: RecorderSession
-        stream: RecognitionSession
-        pending: Buffer
-        chunkBytes: number
-      }
-    | undefined
+  let active: VoiceRecognitionRun | undefined
 
   const toast = (message: string, variant: "info" | "warning" | "error" = "info") => {
     api.ui.toast({ title: "Voice2Text", message, variant, duration: 2500 })
@@ -357,35 +85,13 @@ const tui: TuiPlugin = async (api, options) => {
         return
       }
 
-      const stream = await provider.createRecognition(config, {
+      active = await startVoiceRecognition(config, provider, {
         onStableText: async (text: string) => {
           const next = appendableText(text)
           if (!next) return
           await appendTranscript(api, config, next)
         },
       })
-
-      const session = {
-        stream,
-        pending: Buffer.alloc(0),
-        chunkBytes: Math.max(1, Math.floor((config.rate * config.channels * (config.bits / 8) * config.chunkMs) / 1000)),
-        recorder: undefined as unknown as RecorderSession,
-      }
-
-      const flushPending = async () => {
-        while (session.pending.length >= session.chunkBytes) {
-          const chunk = session.pending.subarray(0, session.chunkBytes)
-          session.pending = session.pending.subarray(session.chunkBytes)
-          session.stream.write(chunk)
-        }
-      }
-
-      session.recorder = createRecorder(config, async (chunk) => {
-        session.pending = Buffer.concat([session.pending, chunk])
-        await flushPending()
-      })
-
-      active = session
     } catch (error) {
       phase = "idle"
       clearToast(api)
@@ -401,17 +107,14 @@ const tui: TuiPlugin = async (api, options) => {
     phase = "transcribing"
 
     try {
-      current.recorder.stop()
-      await current.recorder.done
-      const finalChunk = current.pending.length > 0 ? current.pending : undefined
-      const result: TranscriptResult = await current.stream.finish(finalChunk)
+      const result: TranscriptResult = await current.stop()
       const tail = diffSuffix(result.stableText, appendableText(result.text))
 
       if (tail) {
         await appendTranscript(api, config, tail)
       }
     } catch (error) {
-      await current.stream.abort().catch(() => undefined)
+      await current.abort().catch(() => undefined)
       clearToast(api)
       toast(error instanceof Error ? error.message : String(error), "error")
     } finally {
@@ -445,8 +148,7 @@ const tui: TuiPlugin = async (api, options) => {
   ])
 
   api.lifecycle.onDispose(() => {
-    active?.recorder.stop()
-    void active?.stream.abort().catch(() => undefined)
+    void active?.abort().catch(() => undefined)
   })
 }
 

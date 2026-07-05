@@ -69,6 +69,7 @@
 当前版本已经支持这些能力：
 
 *   OpenCode TUI 标准插件安装
+*   独立终端 CLI：安装同一个 npm 包后可以直接运行 `voice2text`
 *   流式语音识别，不是录完整段再整体上传
 *   识别中的稳定文本实时写入 prompt
 *   第二次按键停止并补齐最后一段文本
@@ -148,6 +149,35 @@ opencode plugin opencode-voice2text@latest
 "commandKeybind": "ctrl+s"
 ```
 
+如果你不想绑定 OpenCode，也可以把同一个包作为普通终端命令使用：
+
+```bash
+npm install -g opencode-voice2text
+voice2text
+```
+
+包名仍然是 `opencode-voice2text`，安装后的命令是 `voice2text`。
+
+CLI 默认启动后立刻录音，识别出的稳定文本会流式输出到终端。按 `Enter` 或 `Ctrl+C` 停止并补齐最终结果。
+
+如果希望命令常驻，并用快捷键反复开始 / 停止，可以使用：
+
+```bash
+voice2text --toggle
+```
+
+toggle 模式默认也是 `Ctrl+S`：
+
+*   按一次 `Ctrl+S` 开始录音
+*   再按一次 `Ctrl+S` 停止并补齐最终结果
+*   按 `Ctrl+C` 退出
+
+也可以换成其他快捷键：
+
+```bash
+voice2text --toggle --toggle-key ctrl+g
+```
+
 ## 一个特别现实的问题：Ctrl+S 可能会没反应
 
 这个问题不是插件独有，而是终端世界里的经典坑。
@@ -175,6 +205,12 @@ stty -ixon
 如果你用的是 bash，可以放进 `~/.bashrc` 或 `~/.bash_profile`。
 
 如果你完全不想处理这个冲突，也没关系，直接把插件配置里的 `commandKeybind` 改成你自己的组合键就行。
+
+如果你用的是独立 CLI toggle 模式，同样可以换快捷键：
+
+```bash
+voice2text --toggle --toggle-key ctrl+g
+```
 
 ## 火山引擎怎么配(推荐直接问 ai 就行)
 
@@ -294,6 +330,7 @@ stty -ixon
 我觉得这插件特别适合下面这些人：
 
 *   已经把 OpenCode 当成主力终端 AI 工具的人
+*   只想在 macOS / Linux 终端里直接语音转文字的人
 *   经常需要快速组织 prompt 的人
 *   中文输入场景很多、懒得频繁切输入法的人
 *   在排查 bug / 写复现描述时更习惯先说出来的人
@@ -327,4 +364,3 @@ stty -ixon
 如果你也在用 OpenCode，而且你也觉得很多 prompt 更适合先说出来，这个插件你可以试试。
 
 如果你有更顺手的快捷键建议，或者你也想补别的 ASR provider，欢迎提 issue 或 PR。
-

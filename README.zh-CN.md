@@ -2,7 +2,7 @@
 
 [English README](./README.md)
 
-这是一个用于 OpenCode TUI 的流式语音输入插件，采用基于 provider 的语音识别架构。目前内置的 provider 是火山引擎 ASR。
+这是一个采用 provider 架构的流式语音输入工具，既可以作为 OpenCode TUI 插件使用，也可以作为独立终端命令使用。目前内置的 provider 是火山引擎 ASR。
 
 按一次快捷键开始识别，正常说话时音频会持续流式发送到火山引擎；再按一次快捷键停止识别。识别出的稳定文本会在你还在说话时持续追加到当前 OpenCode 输入框中。
 
@@ -13,6 +13,7 @@
 ## 特性
 
 - 单个快捷键控制开始 / 停止流式识别
+- 可以在 macOS/Linux 终端里直接运行，并把识别文本输出到 stdout
 - 在会话结束前，稳定识别结果就会提前追加到输入框
 - 配置错误或运行失败时会显示 warning/error toast
 - 支持 macOS 和 Linux
@@ -31,7 +32,7 @@ OpenCode 当前的 TUI 插件 API 支持匹配快捷键，但还没有暴露按�
 
 ## 依赖要求
 
-- OpenCode，并且启用了 TUI plugin 支持
+- 使用 TUI 插件入口时，需要 OpenCode 并启用 TUI plugin 支持
 - 你所选 ASR provider 的可用凭证
 - 本地安装 Sox（macOS/Linux 使用 `rec`，Windows 使用 `sox.exe`）
 
@@ -59,6 +60,8 @@ sox --version
 
 ## 安装
 
+### OpenCode 插件
+
 推荐全局安装：
 
 ```bash
@@ -72,6 +75,66 @@ opencode plugin opencode-voice2text@latest --global
 ```bash
 opencode plugin opencode-voice2text@latest
 ```
+
+### 独立 CLI
+
+如果要在 macOS/Linux 终端里直接使用，先确保本机有 Node.js/npm，然后把同一个 npm 包安装成全局命令：
+
+```bash
+npm install -g opencode-voice2text
+voice2text
+```
+
+或者不全局安装，直接运行：
+
+```bash
+npx opencode-voice2text
+```
+
+npm 包名仍然是 `opencode-voice2text`，安装后的可执行命令是 `voice2text`。
+
+OpenCode 插件安装和独立 CLI 安装是两个入口：需要 TUI 插件时用 `opencode plugin ...`，需要普通终端命令时用 npm 安装或 npx 运行。
+
+## 终端 CLI
+
+默认情况下，命令启动后会立刻开始录音，把麦克风音频流式发送给已配置的 provider，并把稳定识别文本实时输出到 stdout。按 `Ctrl+C` 或回车停止录音。停止后命令会等待 ASR 返回最终结果，补齐剩余尾部文本，然后退出。
+
+如果希望启动后常驻，并用快捷键反复开始 / 停止，可以使用 toggle 模式：
+
+```bash
+voice2text --toggle
+```
+
+toggle 模式下：
+
+- 按一次 `Ctrl+S` 开始录音
+- 再按一次 `Ctrl+S` 停止录音并补齐最终结果
+- 可以继续按下一次开始新一轮语音输入
+- 按 `Ctrl+C` 退出程序
+
+也可以指定其他快捷键：
+
+```bash
+voice2text --toggle --toggle-key ctrl+g
+```
+
+macOS/Linux 下 `Ctrl+S` 可能会先被终端流控截获，导致 CLI 收不到快捷键。如果按了没反应，先执行：
+
+```bash
+stty -ixon
+```
+
+常用选项：
+
+```bash
+voice2text --config ~/.config/opencode/voice2text.local.json
+voice2text --language zh-CN
+voice2text --max-duration 10
+voice2text --toggle --toggle-key ctrl+s
+voice2text --no-trailing-space
+```
+
+CLI 和 OpenCode 插件默认共用同一个本地配置文件，也共用 `OPENCODE_VOICE2TEXT_*` 环境变量，所以凭证只需要配置一次。
 
 ## TUI 配置
 
@@ -120,7 +183,7 @@ Windows 终端没有同样的 `Ctrl+S` XON/XOFF 流控问题，所以 `stty -ixo
 
 ## 凭证配置
 
-在目标机器上创建本地配置文件：
+在目标机器上创建本地配置文件。CLI 和 OpenCode 插件默认共用这同一个文件：
 
 macOS/Linux：
 

@@ -426,6 +426,7 @@ async function createVolcengineRecognition(
       }
     }
   })()
+  void receiveLoop.catch(() => undefined)
 
   let sendChain = Promise.resolve()
 
@@ -456,7 +457,6 @@ async function createVolcengineRecognition(
       }
     },
     async abort() {
-      if (closed) return
       closed = true
       await client.close()
     },

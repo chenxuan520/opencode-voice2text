@@ -1,7 +1,7 @@
 {
   "name": "opencode-voice2text",
-  "version": "0.1.17",
-  "description": "Streaming Volcengine speech-to-text plugin for the OpenCode TUI",
+  "version": "0.1.18",
+  "description": "Streaming Volcengine speech-to-text tool for OpenCode TUI and terminal CLI",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -15,6 +15,7 @@
   "keywords": [
     "opencode",
     "plugin",
+    "cli",
     "speech-to-text",
     "voice",
     "volcengine",
@@ -27,6 +28,9 @@
     "README.zh-CN.md",
     "LICENSE"
   ],
+  "bin": {
+    "voice2text": "dist/cli.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -46,8 +50,8 @@
   },
   "dependencies": {
     "@opencode-ai/plugin": "^1.4.3",
-    "@opentui/solid": "^0.1.97",
-    "solid-js": "^1.9.9"
+    "@opentui/solid": "^0.4.3",
+    "solid-js": "1.9.12"
   },
   "devDependencies": {
     "@types/node": "^22.13.9",

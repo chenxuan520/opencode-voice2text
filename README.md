@@ -2,7 +2,7 @@
 
 [中文文档](./README.zh-CN.md)
 
-This is a streaming voice input plugin for the OpenCode TUI with a provider-based speech recognition architecture. The current built-in provider is Volcengine ASR.
+This is a streaming voice input tool with a provider-based speech recognition architecture. It can run as an OpenCode TUI plugin or as a standalone terminal command. The current built-in provider is Volcengine ASR.
 
 Press the shortcut once to start recognition. While you speak naturally, audio is streamed continuously to Volcengine. Press the shortcut again to stop recognition. Stable recognized text is appended continuously into the current OpenCode input while you are still speaking.
 
@@ -13,6 +13,7 @@ Press the shortcut once to start recognition. While you speak naturally, audio i
 ## Features
 
 - Start and stop streaming recognition with a single shortcut
+- Run directly in macOS/Linux terminals and print recognized text to stdout
 - Stable recognition results are appended to the input before the session ends
 - Warning/error toast feedback for misconfiguration or failures
 - Works on macOS and Linux
@@ -31,7 +32,7 @@ OpenCode's current TUI plugin API supports keybind matching, but it does not exp
 
 ## Requirements
 
-- OpenCode with TUI plugin support
+- OpenCode with TUI plugin support when using the TUI plugin entry
 - Provider credentials for your selected ASR backend
 - Sox installed locally (`rec` on macOS/Linux, `sox.exe` on Windows)
 
@@ -59,6 +60,8 @@ sox --version
 
 ## Install
 
+### OpenCode plugin
+
 Preferred install command:
 
 ```bash
@@ -72,6 +75,66 @@ If you only want it in the current project instead of globally, omit `--global`:
 ```bash
 opencode plugin opencode-voice2text@latest
 ```
+
+### Standalone CLI
+
+For direct terminal use on macOS/Linux, make sure Node.js/npm is available, then install the same package as a global npm command:
+
+```bash
+npm install -g opencode-voice2text
+voice2text
+```
+
+Or run it without a global install:
+
+```bash
+npx opencode-voice2text
+```
+
+The npm package name remains `opencode-voice2text`; the installed executable command is `voice2text`.
+
+The OpenCode plugin install and the standalone CLI install are separate entry points. Use the OpenCode command when you want the TUI plugin, and use the npm command when you want a normal terminal command.
+
+## Terminal CLI
+
+By default, the command starts recording immediately, streams microphone audio to the configured provider, and prints stable recognition text to stdout as it arrives. Stop recording with `Ctrl+C` or Enter. When recording stops, the command waits for the final ASR result, prints any remaining tail text, and exits.
+
+For a reusable hotkey-driven CLI session, use toggle mode:
+
+```bash
+voice2text --toggle
+```
+
+In toggle mode:
+
+- press `Ctrl+S` once to start recording
+- press `Ctrl+S` again to stop and flush the final result
+- repeat for another utterance
+- press `Ctrl+C` to exit
+
+You can choose another toggle key:
+
+```bash
+voice2text --toggle --toggle-key ctrl+g
+```
+
+On macOS/Linux, `Ctrl+S` may be intercepted by terminal flow control before the CLI receives it. If the toggle key does nothing, run:
+
+```bash
+stty -ixon
+```
+
+Useful options:
+
+```bash
+voice2text --config ~/.config/opencode/voice2text.local.json
+voice2text --language zh-CN
+voice2text --max-duration 10
+voice2text --toggle --toggle-key ctrl+s
+voice2text --no-trailing-space
+```
+
+The CLI and OpenCode plugin use the same local config file and `OPENCODE_VOICE2TEXT_*` environment variables, so you only need to create credentials once.
 
 ## TUI config
 
@@ -120,7 +183,7 @@ If OpenCode is already running, restart it so the plugin and dependency tree are
 
 ## Credentials
 
-Create a local config file on the target machine:
+Create a local config file on the target machine. The CLI and OpenCode plugin share this same file by default:
 
 macOS/Linux:
 
