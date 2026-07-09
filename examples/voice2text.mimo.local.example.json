@@ -1,0 +1,16 @@
+{
+  "provider": "mimo",
+  "providerConfig": {
+    "apiKey": "your-mimo-api-key",
+    "model": "mimo-v2.5-asr",
+    "endpoint": "https://api.xiaomimimo.com/v1/chat/completions"
+  },
+  "language": "zh",
+  "chunkMs": 200,
+  "endWindowSize": 800,
+  "maxDurationSeconds": 180,
+  "appendTrailingSpace": true,
+  "rate": 16000,
+  "bits": 16,
+  "channels": 1
+}

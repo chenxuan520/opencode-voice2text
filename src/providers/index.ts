@@ -1,8 +1,10 @@
 import type { VoiceProvider } from "./types.js"
+import { mimoProvider } from "./mimo.js"
 import { volcengineProvider } from "./volcengine.js"
 
 const providers: Record<string, VoiceProvider> = {
   [volcengineProvider.id]: volcengineProvider,
+  [mimoProvider.id]: mimoProvider,
 }
 
 export function getProviderById(providerId: string): VoiceProvider {

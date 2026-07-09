@@ -35,5 +35,6 @@ export type VoiceProvider = {
   configFileFields: string[]
   normalizeConfig: (providerConfig: Record<string, unknown>) => Record<string, unknown>
   validateConfig: (config: Voice2TextConfig) => string | undefined
+  getFinalTranscriptTimeoutMs?: (config: Voice2TextConfig) => number
   createRecognition: (config: Voice2TextConfig, callbacks: RecognitionCallbacks) => Promise<RecognitionSession>
 }

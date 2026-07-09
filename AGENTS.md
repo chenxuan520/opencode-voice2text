@@ -17,8 +17,10 @@ When changing behavior, edit `src/` first and rebuild. Do not hand-edit `dist/`.
 
 ## Plugin behavior
 
-- The plugin streams microphone audio to Volcengine ASR over websocket
-- Stable utterances are appended into the OpenCode prompt while recognition is active
+- The plugin captures microphone audio locally and routes it through the selected ASR provider
+- Built-in providers:
+  - `volcengine`: realtime websocket ASR with stable utterances appended while recognition is active
+  - `mimo`: upload-after-stop ASR that wraps the recorded PCM as WAV and appends the final transcript after stop
 - The default shortcut is `Ctrl+S`
 - The shortcut is toggle-based, not hold-to-talk, because current OpenCode TUI plugin APIs do not expose key release events
 - The current stable interaction uses a long recording toast and clears it when recognition stops; do not reintroduce TSX prompt-right status without local runtime validation
@@ -30,10 +32,11 @@ When changing behavior, edit `src/` first and rebuild. Do not hand-edit `dist/`.
   - `~/.config/opencode/voice2text.local.json`, or
   - `OPENCODE_VOICE2TEXT_*` environment variables
 - Provider-specific credentials should live under `providerConfig`
+- One config file may hold multiple providers at once under `providerConfig.<providerId>`; the top-level `provider` field selects the active provider
 - Keep README examples sanitized
 - README must document how to fix `Ctrl+S` terminal flow-control conflicts using `stty -ixon`
 
-Current preferred config shape:
+Preferred config shapes:
 
 ```json
 {
@@ -47,7 +50,26 @@ Current preferred config shape:
 }
 ```
 
-Legacy flat fields may still be read for compatibility, but new docs and examples must use `providerConfig`.
+```json
+{
+  "provider": "mimo",
+  "providerConfig": {
+    "volcengine": {
+      "appId": "...",
+      "accessToken": "...",
+      "resourceId": "...",
+      "endpoint": "..."
+    },
+    "mimo": {
+      "apiKey": "...",
+      "model": "mimo-v2.5-asr",
+      "endpoint": "https://api.xiaomimimo.com/v1/chat/completions"
+    }
+  }
+}
+```
+
+Legacy flat top-level provider fields may still be read for compatibility, but new docs and examples must use `providerConfig`.
 
 ## Release expectations
 
@@ -68,18 +90,12 @@ If package metadata changes, verify:
 - `bugs`
 - published file list from `npm pack --dry-run`
 
-## CI publish flow
+## Release flow
 
-- GitHub Actions workflow: `.github/workflows/publish.yml`
-- Trigger: push to `master`
-- CI runs typecheck and build before publish
-- CI only publishes when the current `package.json` version does not already exist on npm
-- CI uses npm trusted publishing via GitHub Actions OIDC
-- Required workflow permission: `id-token: write`
+- No GitHub Actions publish workflow is currently committed in this repo
+- Releases are currently manual: bump `package.json`, run the release checks, then publish from an owner-authorized environment
 - Do not commit npm credentials or tokens into the repo
-- Do not add long-lived npm publish tokens to GitHub secrets when trusted publishing is enabled
-
-When preparing a release, bump `package.json` version before pushing to `master`. If the version is unchanged, CI will skip publish.
+- If CI publishing is reintroduced later, validate the workflow file and npm trusted publishing setup against the repo's current state before relying on it
 
 ## Editing guidance
 
@@ -87,7 +103,7 @@ When preparing a release, bump `package.json` version before pushing to `master`
 - Keep the package consumable as a normal npm OpenCode plugin
 - Preserve OpenCode plugin API compatibility
 - If adding dependencies, keep them justified and update README when install or publish behavior changes
-- Prefer local runtime validation through `~/.config/opencode/tui.json` and `~/.config/opencode/plugins/` before publishing npm versions
+- Prefer local runtime validation through `~/.config/opencode/tui.json`; direct `file:///.../dist/index.js` plugin entries are fine for local verification before publishing npm versions
 - Keep provider implementations isolated under `src/providers/`
 
 ## Git commit rules

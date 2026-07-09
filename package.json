@@ -1,7 +1,7 @@
 {
   "name": "opencode-voice2text",
-  "version": "0.1.18",
-  "description": "Streaming Volcengine speech-to-text tool for OpenCode TUI and terminal CLI",
+  "version": "0.1.19",
+  "description": "Provider-based speech-to-text tool for OpenCode TUI and terminal CLI",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -19,6 +19,8 @@
     "speech-to-text",
     "voice",
     "volcengine",
+    "xiaomi",
+    "mimo",
     "asr"
   ],
   "files": [

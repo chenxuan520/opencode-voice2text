@@ -133,7 +133,7 @@ function parseArgs(argv: string[]) {
 function printHelp() {
   process.stdout.write(`Usage: voice2text [options]
 
-Record microphone audio, stream it to the configured ASR provider, and print recognized text to stdout.
+Record microphone audio, send it to the configured ASR provider, and print recognized text to stdout.
 
 Default config:
   ${displayPath(defaultConfigPath())}
@@ -182,7 +182,7 @@ async function createCliSession(
       try {
         const result = await withTimeout(
           run.stop(),
-          FINAL_TRANSCRIPT_TIMEOUT_MS,
+          provider.getFinalTranscriptTimeoutMs?.(config) ?? FINAL_TRANSCRIPT_TIMEOUT_MS,
           "Timed out waiting for final transcript from the ASR provider.",
         )
         const tail = diffSuffix(result.stableText, appendableText(result.text))

@@ -26,6 +26,7 @@ const COMPRESSION_GZIP = 0x1
 
 const DEFAULT_ENDPOINT = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
 const DEFAULT_RESOURCE_ID = "volc.seedasr.sauc.duration"
+const NETWORK_TIMEOUT_MS = 30_000
 
 type VolcengineResponse = {
   flags: number
@@ -143,6 +144,7 @@ class WebSocketBinaryClient {
   private buffer = Buffer.alloc(0)
   private pendingFrames: Buffer[] = []
   private waiters: Array<{ resolve: (value: Buffer) => void; reject: (error: Error) => void }> = []
+  private closedError: Error | undefined
 
   constructor(url: string, headers: Record<string, string>) {
     this.url = new URL(url)
@@ -175,28 +177,63 @@ class WebSocketBinaryClient {
         port: Number(this.url.port || 443),
         servername: this.url.hostname,
       })
-      next.once("secureConnect", () => resolve(next))
-      next.once("error", reject)
+      const cleanup = () => {
+        clearTimeout(timer)
+        next.off("secureConnect", onSecureConnect)
+        next.off("error", onError)
+      }
+      const onSecureConnect = () => {
+        cleanup()
+        resolve(next)
+      }
+      const onError = (error: Error) => {
+        cleanup()
+        reject(error)
+      }
+      const timer = setTimeout(() => {
+        cleanup()
+        next.destroy()
+        reject(new Error("Timed out connecting to Volcengine ASR"))
+      }, NETWORK_TIMEOUT_MS)
+
+      next.once("secureConnect", onSecureConnect)
+      next.once("error", onError)
     })
 
     this.socket = socket
+    this.closedError = undefined
     socket.setNoDelay(true)
     socket.write(headerLines.join("\r\n"))
 
     const handshake = await new Promise<{ headerPart: string; rest: Buffer }>((resolve, reject) => {
       let chunkBuffer = Buffer.alloc(0)
+      const cleanup = () => {
+        clearTimeout(timer)
+        socket.off("data", onData)
+        socket.off("error", onError)
+      }
       const onData = (chunk: Buffer) => {
         chunkBuffer = Buffer.concat([chunkBuffer, chunk])
         const separator = chunkBuffer.indexOf("\r\n\r\n")
         if (separator === -1) return
-        socket.off("data", onData)
+        cleanup()
         resolve({
           headerPart: chunkBuffer.subarray(0, separator).toString("utf8"),
           rest: chunkBuffer.subarray(separator + 4),
         })
       }
+      const onError = (error: Error) => {
+        cleanup()
+        reject(error)
+      }
+      const timer = setTimeout(() => {
+        cleanup()
+        socket.destroy()
+        reject(new Error("Timed out during Volcengine ASR websocket handshake"))
+      }, NETWORK_TIMEOUT_MS)
+
       socket.on("data", onData)
-      socket.once("error", reject)
+      socket.once("error", onError)
     })
 
     const lines = handshake.headerPart.split("\r\n")
@@ -212,10 +249,17 @@ class WebSocketBinaryClient {
     }
 
     socket.on("data", (chunk) => this.onData(chunk))
-    socket.on("close", () => this.flushWaiters(new Error("WebSocket closed")))
-    socket.on("error", (error) => this.flushWaiters(error))
+    socket.on("close", () => this.markClosed(new Error("WebSocket closed")))
+    socket.on("error", (error) => this.markClosed(error))
     if (handshake.rest.length > 0) this.onData(handshake.rest)
     return responseHeaders
+  }
+
+  private markClosed(error: Error) {
+    if (!this.closedError) {
+      this.closedError = error
+    }
+    this.flushWaiters(this.closedError)
   }
 
   private onData(chunk: Buffer) {
@@ -265,7 +309,7 @@ class WebSocketBinaryClient {
       }
 
       if (opcode === WS_OPCODE_CLOSE) {
-        this.flushWaiters(new Error("WebSocket closed by server"))
+        this.markClosed(new Error("WebSocket closed by server"))
         return
       }
 
@@ -292,9 +336,13 @@ class WebSocketBinaryClient {
     this.sendRaw(WS_OPCODE_BINARY, payload)
   }
 
-  async receiveBinary(timeoutMs = 30000) {
+  async receiveBinary(timeoutMs = NETWORK_TIMEOUT_MS) {
     if (this.pendingFrames.length > 0) {
       return this.pendingFrames.shift() as Buffer
+    }
+
+    if (this.closedError) {
+      throw this.closedError
     }
 
     return new Promise<Buffer>((resolve, reject) => {
@@ -321,6 +369,10 @@ class WebSocketBinaryClient {
   async close() {
     if (!this.socket) return
 
+    this.markClosed(new Error("WebSocket closed"))
+    this.pendingFrames = []
+    this.buffer = Buffer.alloc(0)
+
     try {
       this.sendRaw(WS_OPCODE_CLOSE, Buffer.alloc(0))
     } catch {
@@ -328,11 +380,22 @@ class WebSocketBinaryClient {
     }
 
     const socket = this.socket
-    await new Promise<void>((resolve) => {
-      socket.end(() => resolve())
-      setTimeout(() => resolve(), 200)
-    })
     this.socket = undefined
+    await new Promise<void>((resolve) => {
+      let settled = false
+      const finish = () => {
+        if (settled) return
+        settled = true
+        resolve()
+      }
+
+      socket.once("close", finish)
+      socket.end(() => finish())
+      setTimeout(() => {
+        socket.destroy()
+        finish()
+      }, 200)
+    })
   }
 }
 
@@ -399,14 +462,20 @@ async function createVolcengineRecognition(
   let stableText = ""
   let closed = false
 
-  const responseHeaders = await client.connect()
-  const requestPayload = Buffer.from(JSON.stringify(buildVolcengineRequest(config)), "utf8")
-  client.sendBinary(buildClientMessage(MESSAGE_TYPE_FULL_CLIENT_REQUEST, 0x0, requestPayload, SERIALIZATION_JSON))
-  parseServerMessage(await client.receiveBinary())
+  let responseHeaders: Record<string, string>
+  try {
+    responseHeaders = await client.connect()
+    const requestPayload = Buffer.from(JSON.stringify(buildVolcengineRequest(config)), "utf8")
+    client.sendBinary(buildClientMessage(MESSAGE_TYPE_FULL_CLIENT_REQUEST, 0x0, requestPayload, SERIALIZATION_JSON))
+    parseServerMessage(await client.receiveBinary())
+  } catch (error) {
+    await client.close().catch(() => undefined)
+    throw error
+  }
 
   const receiveLoop = (async (): Promise<TranscriptResult> => {
     while (true) {
-      const response = parseServerMessage(await client.receiveBinary(30000))
+      const response = parseServerMessage(await client.receiveBinary(NETWORK_TIMEOUT_MS))
       const nextText = appendableText(response.data?.result?.text)
       if (nextText) lastText = nextText
 
@@ -482,7 +551,7 @@ export const volcengineProvider: VoiceProvider = {
   },
   validateConfig(config: Voice2TextConfig) {
     if (!str(config.providerConfig.appId) || !str(config.providerConfig.accessToken) || !str(config.providerConfig.resourceId)) {
-      return `Missing ${this.displayName} config. Fill ${config.configPath} with ${this.configFileFields.join(", ")}.`
+      return `Missing ${this.displayName} config. Fill ${config.configPath} with ${this.configFileFields.join(", ")} or nest them under providerConfig.volcengine.`
     }
     return undefined
   },

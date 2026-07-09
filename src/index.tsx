@@ -13,6 +13,7 @@ import {
 } from "./runtime.js"
 
 const RECORDING_TOAST_DURATION = 60 * 60 * 1000
+const FINAL_TRANSCRIPT_TIMEOUT_MS = 30_000
 
 type Voice2TextOptions = PluginOptions & RuntimeVoice2TextOptions
 
@@ -39,6 +40,22 @@ function clearToast(api: TuiPluginApi) {
   })
 }
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error) => {
+        clearTimeout(timer)
+        reject(error)
+      },
+    )
+  })
+}
+
 const tui: TuiPlugin = async (api, options) => {
   const baseConfig = await loadConfig((options ?? {}) as Voice2TextOptions)
 
@@ -56,9 +73,17 @@ const tui: TuiPlugin = async (api, options) => {
 
   let phase: "idle" | "recording" | "transcribing" = "idle"
   let active: VoiceRecognitionRun | undefined
+  let transcribing: VoiceRecognitionRun | undefined
+  let transcribingCancelArmed = false
+  let transcribingCancelRequested = false
 
   const toast = (message: string, variant: "info" | "warning" | "error" = "info") => {
     api.ui.toast({ title: "Voice2Text", message, variant, duration: 2500 })
+  }
+
+  const resetTranscribingCancelState = () => {
+    transcribingCancelArmed = false
+    transcribingCancelRequested = false
   }
 
   const startRecording = async () => {
@@ -103,11 +128,20 @@ const tui: TuiPlugin = async (api, options) => {
     if (phase !== "recording" || !active) return
 
     const current = active
+    const finalTranscriptTimeoutMs = provider?.getFinalTranscriptTimeoutMs?.(config) ?? FINAL_TRANSCRIPT_TIMEOUT_MS
     active = undefined
+    transcribing = current
+    resetTranscribingCancelState()
     phase = "transcribing"
 
     try {
-      const result: TranscriptResult = await current.stop()
+      const result: TranscriptResult = await withTimeout(
+        current.stop(),
+        finalTranscriptTimeoutMs,
+        "Timed out waiting for final transcript from the ASR provider.",
+      )
+      if (transcribingCancelRequested) return
+
       const tail = diffSuffix(result.stableText, appendableText(result.text))
 
       if (tail) {
@@ -115,9 +149,13 @@ const tui: TuiPlugin = async (api, options) => {
       }
     } catch (error) {
       await current.abort().catch(() => undefined)
-      clearToast(api)
-      toast(error instanceof Error ? error.message : String(error), "error")
+      if (!transcribingCancelRequested) {
+        clearToast(api)
+        toast(error instanceof Error ? error.message : String(error), "error")
+      }
     } finally {
+      transcribing = undefined
+      resetTranscribingCancelState()
       phase = "idle"
       clearToast(api)
     }
@@ -127,13 +165,32 @@ const tui: TuiPlugin = async (api, options) => {
     {
       title: "Toggle voice input",
       value: "voice2text.toggle",
-      description: `Stream microphone audio to ${provider?.displayName ?? config.provider} and append recognized text to the prompt`,
+      description: `Capture microphone audio, send it to ${provider?.displayName ?? config.provider}, and append recognized text to the prompt`,
       keybind: config.commandKeybind,
       slash: { name: "voice2text", aliases: ["voice"] },
       hidden: false,
       onSelect: () => {
         if (phase === "transcribing") {
-          toast("Still transcribing the previous recording.", "warning")
+          if (!transcribing) {
+            toast("Still transcribing the previous recording.", "warning")
+            return
+          }
+
+          if (transcribingCancelRequested) {
+            toast("Cancelling the previous transcription...", "warning")
+            return
+          }
+
+          if (transcribingCancelArmed) {
+            transcribingCancelArmed = false
+            transcribingCancelRequested = true
+            toast("Cancelling the previous transcription...", "warning")
+            void transcribing.abort().catch(() => undefined)
+            return
+          }
+
+          transcribingCancelArmed = true
+          toast(`Still transcribing the previous recording. Press ${config.commandKeybind} again to cancel.`, "warning")
           return
         }
 
@@ -149,6 +206,7 @@ const tui: TuiPlugin = async (api, options) => {
 
   api.lifecycle.onDispose(() => {
     void active?.abort().catch(() => undefined)
+    void transcribing?.abort().catch(() => undefined)
   })
 }
 

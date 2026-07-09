@@ -10,6 +10,7 @@ const DEFAULT_RATE = 16000
 const DEFAULT_BITS = 16
 const DEFAULT_CHANNELS = 1
 const DEFAULT_END_WINDOW_SIZE = 800
+const RECORDER_FORCE_KILL_TIMEOUT_MS = 5000
 
 export type Voice2TextOptions = Record<string, unknown> & {
   configPath?: string
@@ -28,6 +29,9 @@ export type Voice2TextOptions = Record<string, unknown> & {
   rate?: number
   bits?: number
   channels?: number
+  mimoApiKey?: string
+  mimoEndpoint?: string
+  mimoModel?: string
 }
 
 type RecorderSession = {
@@ -63,6 +67,21 @@ function bool(value: unknown, fallback: boolean) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function selectProviderConfig(value: unknown, providerId: string, ownerProviderId = "") {
+  if (!isRecord(value)) return {}
+
+  const nested = value[providerId]
+  if (isRecord(nested)) {
+    return nested
+  }
+
+  if (ownerProviderId && ownerProviderId !== providerId) {
+    return {}
+  }
+
+  return value
 }
 
 export function appendableText(text: unknown) {
@@ -146,13 +165,17 @@ async function readLocalConfig(configPaths: string[]) {
   }
 }
 
-function buildLegacyProviderConfig(merged: Record<string, unknown>, env: NodeJS.ProcessEnv) {
+function buildLegacyVolcengineProviderConfig(
+  local: Record<string, unknown>,
+  options: Record<string, unknown>,
+  env: NodeJS.ProcessEnv,
+) {
   const providerConfig: Record<string, unknown> = {}
 
-  const endpoint = str(merged.endpoint ?? env.OPENCODE_VOICE2TEXT_ENDPOINT)
-  const appId = str(merged.appId ?? env.OPENCODE_VOICE2TEXT_APP_ID)
-  const accessToken = str(merged.accessToken ?? env.OPENCODE_VOICE2TEXT_ACCESS_TOKEN)
-  const resourceId = str(merged.resourceId ?? env.OPENCODE_VOICE2TEXT_RESOURCE_ID)
+  const endpoint = str(options.endpoint ?? env.OPENCODE_VOICE2TEXT_ENDPOINT ?? local.endpoint)
+  const appId = str(options.appId ?? env.OPENCODE_VOICE2TEXT_APP_ID ?? local.appId)
+  const accessToken = str(options.accessToken ?? env.OPENCODE_VOICE2TEXT_ACCESS_TOKEN ?? local.accessToken)
+  const resourceId = str(options.resourceId ?? env.OPENCODE_VOICE2TEXT_RESOURCE_ID ?? local.resourceId)
 
   if (endpoint) providerConfig.endpoint = endpoint
   if (appId) providerConfig.appId = appId
@@ -160,6 +183,37 @@ function buildLegacyProviderConfig(merged: Record<string, unknown>, env: NodeJS.
   if (resourceId) providerConfig.resourceId = resourceId
 
   return providerConfig
+}
+
+function buildMimoProviderConfig(
+  local: Record<string, unknown>,
+  options: Record<string, unknown>,
+  env: NodeJS.ProcessEnv,
+) {
+  const providerConfig: Record<string, unknown> = {}
+
+  const apiKey = str(options.mimoApiKey ?? env.OPENCODE_VOICE2TEXT_MIMO_API_KEY ?? local.mimoApiKey)
+  const endpoint = str(options.mimoEndpoint ?? env.OPENCODE_VOICE2TEXT_MIMO_ENDPOINT ?? local.mimoEndpoint)
+  const model = str(options.mimoModel ?? env.OPENCODE_VOICE2TEXT_MIMO_MODEL ?? local.mimoModel)
+
+  if (apiKey) providerConfig.apiKey = apiKey
+  if (endpoint) providerConfig.endpoint = endpoint
+  if (model) providerConfig.model = model
+
+  return providerConfig
+}
+
+function buildProviderConfigOverrides(
+  providerId: string,
+  local: Record<string, unknown>,
+  options: Record<string, unknown>,
+  env: NodeJS.ProcessEnv,
+) {
+  if (providerId === "mimo") {
+    return buildMimoProviderConfig(local, options, env)
+  }
+
+  return buildLegacyVolcengineProviderConfig(local, options, env)
 }
 
 export async function loadConfig(
@@ -175,26 +229,26 @@ export async function loadConfig(
   const { configPath, local } = await readLocalConfig(configuredPaths)
   const env = process.env
   const merged = { ...local, ...options }
-  const nestedProviderConfig = {
-    ...(isRecord(local.providerConfig) ? local.providerConfig : {}),
-    ...(isRecord(options.providerConfig) ? options.providerConfig : {}),
-  }
+  const provider = str(options.provider ?? env.OPENCODE_VOICE2TEXT_PROVIDER ?? local.provider, "volcengine")
+  const localProviderConfig = selectProviderConfig(local.providerConfig, provider, str(local.provider, "volcengine"))
+  const optionProviderConfig = selectProviderConfig(options.providerConfig, provider, str(options.provider))
 
   return {
     configPath,
     commandKeybind: str(merged.commandKeybind, "ctrl+s"),
-    provider: str(merged.provider ?? env.OPENCODE_VOICE2TEXT_PROVIDER, "volcengine"),
-    language: str(merged.language ?? env.OPENCODE_VOICE2TEXT_LANGUAGE),
-    chunkMs: num(merged.chunkMs ?? env.OPENCODE_VOICE2TEXT_CHUNK_MS, DEFAULT_CHUNK_MS),
-    endWindowSize: num(merged.endWindowSize ?? env.OPENCODE_VOICE2TEXT_END_WINDOW_SIZE, DEFAULT_END_WINDOW_SIZE),
-    maxDurationSeconds: num(merged.maxDurationSeconds ?? env.OPENCODE_VOICE2TEXT_MAX_DURATION_SECONDS, 180),
-    appendTrailingSpace: bool(merged.appendTrailingSpace ?? env.OPENCODE_VOICE2TEXT_APPEND_TRAILING_SPACE, true),
-    rate: num(merged.rate ?? env.OPENCODE_VOICE2TEXT_SAMPLE_RATE, DEFAULT_RATE),
-    bits: num(merged.bits ?? env.OPENCODE_VOICE2TEXT_BITS, DEFAULT_BITS),
-    channels: num(merged.channels ?? env.OPENCODE_VOICE2TEXT_CHANNELS, DEFAULT_CHANNELS),
+    provider,
+    language: str(options.language ?? env.OPENCODE_VOICE2TEXT_LANGUAGE ?? local.language),
+    chunkMs: num(options.chunkMs ?? env.OPENCODE_VOICE2TEXT_CHUNK_MS ?? local.chunkMs, DEFAULT_CHUNK_MS),
+    endWindowSize: num(options.endWindowSize ?? env.OPENCODE_VOICE2TEXT_END_WINDOW_SIZE ?? local.endWindowSize, DEFAULT_END_WINDOW_SIZE),
+    maxDurationSeconds: num(options.maxDurationSeconds ?? env.OPENCODE_VOICE2TEXT_MAX_DURATION_SECONDS ?? local.maxDurationSeconds, 180),
+    appendTrailingSpace: bool(options.appendTrailingSpace ?? env.OPENCODE_VOICE2TEXT_APPEND_TRAILING_SPACE ?? local.appendTrailingSpace, true),
+    rate: num(options.rate ?? env.OPENCODE_VOICE2TEXT_SAMPLE_RATE ?? local.rate, DEFAULT_RATE),
+    bits: num(options.bits ?? env.OPENCODE_VOICE2TEXT_BITS ?? local.bits, DEFAULT_BITS),
+    channels: num(options.channels ?? env.OPENCODE_VOICE2TEXT_CHANNELS ?? local.channels, DEFAULT_CHANNELS),
     providerConfig: {
-      ...nestedProviderConfig,
-      ...buildLegacyProviderConfig(merged, env),
+      ...localProviderConfig,
+      ...buildProviderConfigOverrides(provider, local, options, env),
+      ...optionProviderConfig,
     },
   }
 }
@@ -257,6 +311,24 @@ function createRecorder(config: Voice2TextConfig, onChunk: (chunk: Buffer) => Pr
   let finished = false
   let streamError: Error | undefined
   let writeChain = Promise.resolve()
+  let forceStopTimer: NodeJS.Timeout | undefined
+  let forceKilled = false
+
+  const requestStop = () => {
+    if (finished) return
+
+    if (!stopRequested) {
+      stopRequested = true
+      child.kill(process.platform === "win32" ? undefined : "SIGINT")
+    }
+
+    if (forceStopTimer) return
+    forceStopTimer = setTimeout(() => {
+      if (finished) return
+      forceKilled = true
+      child.kill(process.platform === "win32" ? undefined : "SIGKILL")
+    }, RECORDER_FORCE_KILL_TIMEOUT_MS)
+  }
 
   child.stdout?.on("data", (chunk: Buffer) => {
     writeChain = writeChain.then(async () => {
@@ -265,8 +337,7 @@ function createRecorder(config: Voice2TextConfig, onChunk: (chunk: Buffer) => Pr
         await onChunk(chunk)
       } catch (error) {
         streamError = error instanceof Error ? error : new Error(String(error))
-        stopRequested = true
-        child.kill(process.platform === "win32" ? undefined : "SIGINT")
+        requestStop()
       }
     })
   })
@@ -276,24 +347,36 @@ function createRecorder(config: Voice2TextConfig, onChunk: (chunk: Buffer) => Pr
   })
 
   const timer = setTimeout(() => {
-    stopRequested = true
-    child.kill(process.platform === "win32" ? undefined : "SIGINT")
+    requestStop()
   }, config.maxDurationSeconds * 1000)
 
   const done = new Promise<void>((resolve, reject) => {
     child.on("error", (error: NodeJS.ErrnoException) => {
       clearTimeout(timer)
+      if (forceStopTimer) {
+        clearTimeout(forceStopTimer)
+        forceStopTimer = undefined
+      }
       finished = true
       reject(error?.code === "ENOENT" ? new Error(installHint()) : error)
     })
 
     child.on("close", async (code, signal) => {
       clearTimeout(timer)
+      if (forceStopTimer) {
+        clearTimeout(forceStopTimer)
+        forceStopTimer = undefined
+      }
       finished = true
       await writeChain
 
       if (streamError) {
         reject(streamError)
+        return
+      }
+
+      if (forceKilled) {
+        reject(new Error("Recording did not stop cleanly."))
         return
       }
 
@@ -309,9 +392,7 @@ function createRecorder(config: Voice2TextConfig, onChunk: (chunk: Buffer) => Pr
   return {
     done,
     stop() {
-      if (finished || child.killed) return
-      stopRequested = true
-      child.kill(process.platform === "win32" ? undefined : "SIGINT")
+      requestStop()
     },
   }
 }
@@ -365,7 +446,10 @@ export async function startVoiceRecognition(
     },
     async abort() {
       session.recorder.stop()
-      await session.stream.abort().catch(() => undefined)
+      await Promise.all([
+        session.recorder.done.catch(() => undefined),
+        session.stream.abort().catch(() => undefined),
+      ])
     },
   }
 }

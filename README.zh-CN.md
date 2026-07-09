@@ -2,9 +2,9 @@
 
 [English README](./README.md)
 
-这是一个采用 provider 架构的流式语音输入工具，既可以作为 OpenCode TUI 插件使用，也可以作为独立终端命令使用。目前内置的 provider 是火山引擎 ASR。
+这是一个采用 provider 架构的语音识别工具，既可以作为 OpenCode TUI 插件使用，也可以作为独立终端命令使用。目前内置的 provider 是火山引擎 ASR 和小米 MiMo ASR。
 
-按一次快捷键开始识别，正常说话时音频会持续流式发送到火山引擎；再按一次快捷键停止识别。识别出的稳定文本会在你还在说话时持续追加到当前 OpenCode 输入框中。
+按一次快捷键开始识别。麦克风音频始终先在本地采集，然后由不同 provider 按各自 API 方式处理。火山引擎会在你说话过程中持续追加稳定文本；小米 MiMo 会在你停止录音后把音频封装成 WAV 上传，再追加最终识别结果。
 
 ## 演示
 
@@ -12,18 +12,18 @@
 
 ## 特性
 
-- 单个快捷键控制开始 / 停止流式识别
+- 单个快捷键控制开始 / 停止语音识别
 - 可以在 macOS/Linux 终端里直接运行，并把识别文本输出到 stdout
-- 在会话结束前，稳定识别结果就会提前追加到输入框
+- 同时支持实时流式和停止后上传两类 ASR provider
 - 配置错误或运行失败时会显示 warning/error toast
 - 支持 macOS 和 Linux
 - 凭证放在插件仓库之外，避免误提交
 
 ## 行为说明
 
-- 第一次按 `Ctrl+S`：开始采集麦克风音频并启动流式识别
-- 说话过程中：稳定识别文本会持续追加到当前 prompt
-- 第二次按 `Ctrl+S`：停止采集，等待 ASR 最终结果，并补上剩余尾部文本
+- 第一次按 `Ctrl+S`：开始采集麦克风音频并启动识别
+- 说话过程中：支持实时 partial 的 provider 会持续追加稳定识别文本
+- 第二次按 `Ctrl+S`：停止采集，等待 provider 返回最终结果，并补上剩余尾部文本
 - 录音期间会显示一个持续存在的 recording toast，识别停止后自动消失
 
 ## 为什么是切换式而不是按住说话
@@ -97,7 +97,7 @@ OpenCode 插件安装和独立 CLI 安装是两个入口：需要 TUI 插件时�
 
 ## 终端 CLI
 
-默认情况下，命令启动后会立刻开始录音，把麦克风音频流式发送给已配置的 provider，并把稳定识别文本实时输出到 stdout。按 `Ctrl+C` 或回车停止录音。停止后命令会等待 ASR 返回最终结果，补齐剩余尾部文本，然后退出。
+默认情况下，命令启动后会立刻开始录音，把麦克风音频发送给已配置的 provider，并把识别文本输出到 stdout。实时 provider 会在录音过程中持续输出稳定文本；停止后上传类 provider 会在最终结果返回后一次性输出。按 `Ctrl+C` 或回车停止录音。停止后命令会等待 ASR 返回最终结果，补齐剩余尾部文本，然后退出。
 
 如果希望启动后常驻，并用快捷键反复开始 / 停止，可以使用 toggle 模式：
 
@@ -130,6 +130,7 @@ stty -ixon
 voice2text --config ~/.config/opencode/voice2text.local.json
 voice2text --language zh-CN
 voice2text --max-duration 10
+voice2text --provider mimo
 voice2text --toggle --toggle-key ctrl+s
 voice2text --no-trailing-space
 ```
@@ -185,6 +186,10 @@ Windows 终端没有同样的 `Ctrl+S` XON/XOFF 流控问题，所以 `stty -ixo
 
 在目标机器上创建本地配置文件。CLI 和 OpenCode 插件默认共用这同一个文件：
 
+切换 provider 时，默认配置文件路径不会变化。
+
+同一个配置文件也可以同时保存多个 provider 的凭证，外层的 `provider` 字段决定当前实际使用哪个 provider。
+
 macOS/Linux：
 
 `~/.config/opencode/voice2text.local.json`
@@ -213,17 +218,39 @@ Windows：
 }
 ```
 
-示例模板也放在 `examples/voice2text.local.example.json`。
+示例模板也放在 `examples/voice2text.local.example.json`（火山引擎）和 `examples/voice2text.mimo.local.example.json`（小米 MiMo）。
+
+如果你想在一个配置文件里同时保存多个 provider，可以把 `providerConfig` 写成按 provider id 分组的嵌套结构：
+
+```json
+{
+  "provider": "volcengine",
+  "providerConfig": {
+    "volcengine": {
+      "appId": "your-volcengine-app-id",
+      "accessToken": "your-volcengine-access-token",
+      "resourceId": "volc.seedasr.sauc.duration",
+      "endpoint": "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
+    },
+    "mimo": {
+      "apiKey": "your-mimo-api-key",
+      "model": "mimo-v2.5-asr",
+      "endpoint": "https://api.xiaomimimo.com/v1/chat/completions"
+    }
+  },
+  "language": "zh"
+}
+```
+
+这个多 provider 示例也放在 `examples/voice2text.multi-provider.local.example.json`。
 
 ## 火山引擎配置
 
 当前内置的 `volcengine` provider 需要你先在火山引擎准备好以下配置，插件才能正常工作：
 
 - 火山引擎 ASR 产品页：<https://www.volcengine.com/product/asr>
-- `providerConfig.appId`
-- `providerConfig.accessToken`
-- `providerConfig.resourceId`
-- `providerConfig.endpoint`
+- 单 provider 配置：`providerConfig.appId`、`providerConfig.accessToken`、`providerConfig.resourceId`、`providerConfig.endpoint`
+- 多 provider 配置：`providerConfig.volcengine.appId`、`providerConfig.volcengine.accessToken`、`providerConfig.volcengine.resourceId`、`providerConfig.volcengine.endpoint`
 
 典型配置流程：
 
@@ -261,6 +288,35 @@ Windows：
 
 如果在没有有效火山引擎凭证的情况下触发插件，它会显示 warning toast，而不是静默失败。
 
+## 小米 MiMo 配置
+
+当前内置的 `mimo` provider 需要你先在小米 MiMo 准备好以下配置：
+
+- 小米 MiMo ASR 文档：<https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/audio/Speech-Recognition>
+- 单 provider 配置：`providerConfig.apiKey`、`providerConfig.model`、`providerConfig.endpoint`
+- 多 provider 配置：`providerConfig.mimo.apiKey`、`providerConfig.mimo.model`、`providerConfig.mimo.endpoint`
+
+当前 MiMo provider 的行为：
+
+- 麦克风音频仍然和火山引擎一样在本地采集
+- 停止录音后，插件会把 PCM 封装成 WAV 再上传给 MiMo
+- MiMo 不会在你说话过程中持续追加文本，而是在上传识别完成后追加最终文本
+- `language` 应填写 `auto`、`zh` 或 `en`；像 `zh-CN`、`en-US` 这类值会自动归一化
+
+示例：
+
+```json
+{
+  "provider": "mimo",
+  "providerConfig": {
+    "apiKey": "your-mimo-api-key",
+    "model": "mimo-v2.5-asr",
+    "endpoint": "https://api.xiaomimimo.com/v1/chat/completions"
+  },
+  "language": "zh"
+}
+```
+
 你也可以用下面这个环境变量覆盖配置文件路径：
 
 ```bash
@@ -292,6 +348,15 @@ export OPENCODE_VOICE2TEXT_RESOURCE_ID=volc.seedasr.sauc.duration
 export OPENCODE_VOICE2TEXT_ENDPOINT=wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async
 ```
 
+如果你使用的是小米 MiMo，也支持下面这些 provider 专属环境变量：
+
+```bash
+export OPENCODE_VOICE2TEXT_PROVIDER=mimo
+export OPENCODE_VOICE2TEXT_MIMO_API_KEY=...
+export OPENCODE_VOICE2TEXT_MIMO_MODEL=mimo-v2.5-asr
+export OPENCODE_VOICE2TEXT_MIMO_ENDPOINT=https://api.xiaomimimo.com/v1/chat/completions
+```
+
 ## 插件选项
 
 你也可以通过 `tui.json` 传入同样的运行时配置：
@@ -314,9 +379,11 @@ export OPENCODE_VOICE2TEXT_ENDPOINT=wss://openspeech.bytedance.com/api/v3/sauc/b
 
 当前配置结构是面向 provider 的，这样后续新增 ASR 后端时不需要改安装入口形态。
 
-- 当前 provider：`volcengine`
+- 当前 provider：`volcengine`、`mimo`
 - 未来 provider 可以复用同一套插件入口和 TUI 行为
 - provider 专属密钥统一放到 `providerConfig` 下
+- 单个 provider 的配置可以继续使用平铺的 `providerConfig`
+- 多 provider 的配置可以把凭证放到 `providerConfig.<providerId>` 下，再通过顶层 `provider` 切换
 
 如果你要在代码里新增一个 provider：
 

@@ -2,9 +2,9 @@
 
 [中文文档](./README.zh-CN.md)
 
-This is a streaming voice input tool with a provider-based speech recognition architecture. It can run as an OpenCode TUI plugin or as a standalone terminal command. The current built-in provider is Volcengine ASR.
+This is a provider-based speech recognition tool that can run as an OpenCode TUI plugin or as a standalone terminal command. The current built-in providers are Volcengine ASR and Xiaomi MiMo ASR.
 
-Press the shortcut once to start recognition. While you speak naturally, audio is streamed continuously to Volcengine. Press the shortcut again to stop recognition. Stable recognized text is appended continuously into the current OpenCode input while you are still speaking.
+Press the shortcut once to start recognition. Audio is always captured locally from the microphone, then each provider handles it according to its API. Volcengine appends stable text while you are still speaking. Xiaomi MiMo uploads the recorded audio as a WAV file after you stop, then appends the final transcript.
 
 ## Demo
 
@@ -12,18 +12,18 @@ Press the shortcut once to start recognition. While you speak naturally, audio i
 
 ## Features
 
-- Start and stop streaming recognition with a single shortcut
+- Start and stop voice recognition with a single shortcut
 - Run directly in macOS/Linux terminals and print recognized text to stdout
-- Stable recognition results are appended to the input before the session ends
+- Support both realtime and upload-after-stop ASR providers
 - Warning/error toast feedback for misconfiguration or failures
 - Works on macOS and Linux
 - Keeps credentials out of the plugin repo
 
 ## Behavior
 
-- First `Ctrl+S`: start microphone capture and streaming recognition
-- While speaking: stable recognized text is appended continuously to the current prompt
-- Second `Ctrl+S`: stop capture, wait for the final ASR result, then append the remaining tail text
+- First `Ctrl+S`: start microphone capture and recognition
+- While speaking: providers with realtime partials append stable recognized text continuously to the current prompt
+- Second `Ctrl+S`: stop capture, wait for the provider's final result, then append the remaining tail text
 - A persistent recording toast stays visible while recording and disappears automatically when recognition stops
 
 ## Why this is toggle-based
@@ -97,7 +97,7 @@ The OpenCode plugin install and the standalone CLI install are separate entry po
 
 ## Terminal CLI
 
-By default, the command starts recording immediately, streams microphone audio to the configured provider, and prints stable recognition text to stdout as it arrives. Stop recording with `Ctrl+C` or Enter. When recording stops, the command waits for the final ASR result, prints any remaining tail text, and exits.
+By default, the command starts recording immediately, sends microphone audio to the configured provider, and prints recognition text to stdout as it arrives. Realtime providers print stable text during recording. Upload-after-stop providers print once the final transcript is ready. Stop recording with `Ctrl+C` or Enter. When recording stops, the command waits for the final ASR result, prints any remaining tail text, and exits.
 
 For a reusable hotkey-driven CLI session, use toggle mode:
 
@@ -130,6 +130,7 @@ Useful options:
 voice2text --config ~/.config/opencode/voice2text.local.json
 voice2text --language zh-CN
 voice2text --max-duration 10
+voice2text --provider mimo
 voice2text --toggle --toggle-key ctrl+s
 voice2text --no-trailing-space
 ```
@@ -185,6 +186,10 @@ If OpenCode is already running, restart it so the plugin and dependency tree are
 
 Create a local config file on the target machine. The CLI and OpenCode plugin share this same file by default:
 
+The default config path does not change when you switch providers.
+
+The same file can also hold credentials for multiple providers at once. The top-level `provider` field decides which provider is active.
+
 macOS/Linux:
 
 `~/.config/opencode/voice2text.local.json`
@@ -213,7 +218,31 @@ Windows:
 }
 ```
 
-An example template also lives in `examples/voice2text.local.example.json`.
+Example templates also live in `examples/voice2text.local.example.json` for Volcengine and `examples/voice2text.mimo.local.example.json` for Xiaomi MiMo.
+
+If you want one config file to keep both providers ready, use a nested `providerConfig` shape keyed by provider id:
+
+```json
+{
+  "provider": "volcengine",
+  "providerConfig": {
+    "volcengine": {
+      "appId": "your-volcengine-app-id",
+      "accessToken": "your-volcengine-access-token",
+      "resourceId": "volc.seedasr.sauc.duration",
+      "endpoint": "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
+    },
+    "mimo": {
+      "apiKey": "your-mimo-api-key",
+      "model": "mimo-v2.5-asr",
+      "endpoint": "https://api.xiaomimimo.com/v1/chat/completions"
+    }
+  },
+  "language": "zh"
+}
+```
+
+This multi-provider example also lives in `examples/voice2text.multi-provider.local.example.json`.
 
 ## Volcengine setup
 
@@ -221,10 +250,8 @@ For the built-in `volcengine` provider, you need to prepare the following values
 
 - Volcengine ASR product page: <https://www.volcengine.com/product/asr>
 
-- `providerConfig.appId`
-- `providerConfig.accessToken`
-- `providerConfig.resourceId`
-- `providerConfig.endpoint`
+- single-provider config: `providerConfig.appId`, `providerConfig.accessToken`, `providerConfig.resourceId`, `providerConfig.endpoint`
+- multi-provider config: `providerConfig.volcengine.appId`, `providerConfig.volcengine.accessToken`, `providerConfig.volcengine.resourceId`, `providerConfig.volcengine.endpoint`
 
 Typical setup flow:
 
@@ -262,6 +289,35 @@ Example:
 
 If the plugin is triggered without valid Volcengine credentials, it will show a warning toast instead of failing silently.
 
+## Xiaomi MiMo setup
+
+For the built-in `mimo` provider, prepare the following values from Xiaomi MiMo before using the plugin:
+
+- Xiaomi MiMo ASR docs: <https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/audio/Speech-Recognition>
+- single-provider config: `providerConfig.apiKey`, `providerConfig.model`, `providerConfig.endpoint`
+- multi-provider config: `providerConfig.mimo.apiKey`, `providerConfig.mimo.model`, `providerConfig.mimo.endpoint`
+
+Current MiMo provider behavior:
+
+- microphone audio is captured locally the same way as Volcengine
+- when recording stops, the plugin wraps the recorded PCM as a WAV file and uploads it to MiMo
+- MiMo does not append text while you are still speaking; text is appended after the upload finishes
+- `language` should be `auto`, `zh`, or `en`; values such as `zh-CN` and `en-US` are normalized automatically
+
+Example:
+
+```json
+{
+  "provider": "mimo",
+  "providerConfig": {
+    "apiKey": "your-mimo-api-key",
+    "model": "mimo-v2.5-asr",
+    "endpoint": "https://api.xiaomimimo.com/v1/chat/completions"
+  },
+  "language": "zh"
+}
+```
+
 You can override the config path with:
 
 ```bash
@@ -293,6 +349,15 @@ export OPENCODE_VOICE2TEXT_RESOURCE_ID=volc.seedasr.sauc.duration
 export OPENCODE_VOICE2TEXT_ENDPOINT=wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async
 ```
 
+If you are using Xiaomi MiMo, these provider-specific environment variables are also supported:
+
+```bash
+export OPENCODE_VOICE2TEXT_PROVIDER=mimo
+export OPENCODE_VOICE2TEXT_MIMO_API_KEY=...
+export OPENCODE_VOICE2TEXT_MIMO_MODEL=mimo-v2.5-asr
+export OPENCODE_VOICE2TEXT_MIMO_ENDPOINT=https://api.xiaomimimo.com/v1/chat/completions
+```
+
 ## Plugin options
 
 You can pass the same runtime options through `tui.json`:
@@ -315,9 +380,11 @@ In practice, credentials are best kept in the local config file or environment v
 
 The config is now provider-oriented so more ASR backends can be added later without changing the install shape.
 
-- current provider: `volcengine`
+- current providers: `volcengine`, `mimo`
 - future providers can reuse the same plugin entry and TUI behavior
 - provider-specific secrets now live under `providerConfig`
+- single-provider configs can keep using a flat `providerConfig`
+- multi-provider configs can nest credentials under `providerConfig.<providerId>` and switch with the top-level `provider`
 
 To add a new provider in code:
 
