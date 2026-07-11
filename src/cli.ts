@@ -10,6 +10,8 @@ import {
 
 const FINAL_TRANSCRIPT_TIMEOUT_MS = 30_000
 const DEFAULT_TOGGLE_KEY = "ctrl+s"
+const CTRL_C_SEQUENCE = "\u0003"
+const CTRL_S_SEQUENCE = keySequence("ctrl+s")
 
 type CliOptions = Record<string, unknown> & {
   toggle?: boolean
@@ -148,7 +150,7 @@ Options:
   --no-trailing-space      Do not append a trailing space after recognized text
   -h, --help               Show this help
 
-Stop recording with Ctrl+C or Enter.
+Stop recording with Ctrl+C, Ctrl+S, or Enter.
 `)
 }
 
@@ -231,31 +233,65 @@ async function createCliSession(
 }
 
 async function runOnce(config: ReturnType<typeof createRuntimeConfig>["config"], provider: ReturnType<typeof createRuntimeConfig>["provider"]) {
-  const active = await createCliSession(config, provider)
+  let stopping = false
+  let stdinListener: ((chunk: Buffer | string) => void) | undefined
 
-  process.once("SIGINT", () => {
-    void active.stop()
+  const cleanupInput = () => {
+    if (!process.stdin.isTTY) return
+    if (stdinListener) {
+      process.stdin.off("data", stdinListener)
+      stdinListener = undefined
+    }
+    if (process.stdin.isRaw) {
+      process.stdin.setRawMode(false)
+    }
+    process.stdin.pause()
+  }
+
+  const finish = (stopPromise: Promise<void>) => {
+    cleanupInput()
+    void stopPromise
       .then(() => process.exit(0))
       .catch((error) => {
         process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
         process.exit(1)
       })
+  }
+
+  const active = await createCliSession(config, provider, {
+    onAutoStop: finish,
   })
+
+  const stopAndExit = () => {
+    if (stopping) {
+      cleanupInput()
+      process.exit(130)
+    }
+    stopping = true
+    finish(active.stop())
+  }
+
+  process.once("SIGINT", stopAndExit)
 
   if (process.stdin.isTTY) {
     process.stdin.resume()
     process.stdin.setEncoding("utf8")
-    process.stdin.once("data", () => {
-      void active.stop()
-        .then(() => process.exit(0))
-        .catch((error) => {
-          process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
-          process.exit(1)
-        })
-    })
+
+    if (typeof process.stdin.setRawMode === "function") {
+      process.stdin.setRawMode(true)
+      stdinListener = (chunk) => {
+        const input = chunk.toString()
+        if (input === CTRL_C_SEQUENCE || input === CTRL_S_SEQUENCE || input === "\r" || input === "\n") {
+          stopAndExit()
+        }
+      }
+      process.stdin.on("data", stdinListener)
+    } else {
+      process.stdin.once("data", stopAndExit)
+    }
   }
 
-  writeStatus("Listening... press Ctrl+C or Enter to stop.\n")
+  writeStatus("Listening... press Ctrl+C, Ctrl+S, or Enter to stop.\n")
 }
 
 async function runToggle(config: ReturnType<typeof createRuntimeConfig>["config"], provider: ReturnType<typeof createRuntimeConfig>["provider"], toggleKey: string) {

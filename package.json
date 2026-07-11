@@ -1,6 +1,6 @@
 {
   "name": "opencode-voice2text",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "description": "Provider-based speech-to-text tool for OpenCode TUI and terminal CLI",
   "type": "module",
   "license": "MIT",

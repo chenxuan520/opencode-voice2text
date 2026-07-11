@@ -97,7 +97,9 @@ The OpenCode plugin install and the standalone CLI install are separate entry po
 
 ## Terminal CLI
 
-By default, the command starts recording immediately, sends microphone audio to the configured provider, and prints recognition text to stdout as it arrives. Realtime providers print stable text during recording. Upload-after-stop providers print once the final transcript is ready. Stop recording with `Ctrl+C` or Enter. When recording stops, the command waits for the final ASR result, prints any remaining tail text, and exits.
+By default, the command starts recording immediately, sends microphone audio to the configured provider, and prints recognition text to stdout as it arrives. Realtime providers print stable text during recording. Upload-after-stop providers print once the final transcript is ready. Stop recording with `Ctrl+C`, `Ctrl+S`, or Enter. When recording stops, the command waits for the final ASR result, prints any remaining tail text, and exits.
+
+`Ctrl+S` in the one-shot CLI depends on the terminal forwarding that key to the process. If your terminal uses XON/XOFF flow control, `Ctrl+C` remains the reliable fallback unless you disable flow control with `stty -ixon`.
 
 For a reusable hotkey-driven CLI session, use toggle mode:
 
