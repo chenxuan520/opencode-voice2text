@@ -101,6 +101,10 @@ By default, the command starts recording immediately, sends microphone audio to 
 
 `Ctrl+S` in the one-shot CLI depends on the terminal forwarding that key to the process. If your terminal uses XON/XOFF flow control, `Ctrl+C` remains the reliable fallback unless you disable flow control with `stty -ixon`.
 
+Run `voice2text --help` for the full option list, examples, and provider notes. Use `voice2text --version` to check the installed CLI version. Unknown options now fail fast instead of starting voice recognition.
+
+To self-update the CLI from npm, run `voice2text update`. It reinstalls the latest published version with `npm install -g opencode-voice2text@latest`.
+
 For a reusable hotkey-driven CLI session, use toggle mode:
 
 ```bash
@@ -135,6 +139,8 @@ voice2text --max-duration 10
 voice2text --provider mimo
 voice2text --toggle --toggle-key ctrl+s
 voice2text --no-trailing-space
+voice2text --version
+voice2text update
 ```
 
 The CLI and OpenCode plugin use the same local config file and `OPENCODE_VOICE2TEXT_*` environment variables, so you only need to create credentials once.

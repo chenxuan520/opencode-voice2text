@@ -101,6 +101,10 @@ OpenCode 插件安装和独立 CLI 安装是两个入口：需要 TUI 插件时�
 
 单次 CLI 模式里的 `Ctrl+S` 也依赖终端真的把这个按键交给进程。如果你的终端启用了 XON/XOFF 流控，`Ctrl+S` 可能还是不会生效；这时 `Ctrl+C` 仍然是稳定兜底，或者先执行 `stty -ixon` 再试。
 
+执行 `voice2text --help` 可以查看完整参数、示例和 provider 说明；执行 `voice2text --version` 可以确认当前安装的 CLI 版本。现在遇到未知参数时也会直接报错退出，不会误触发语音录制。
+
+如果想直接从 npm 自更新 CLI，可以执行 `voice2text update`。它本质上会运行 `npm install -g opencode-voice2text@latest` 来安装最新已发布版本。
+
 如果希望启动后常驻，并用快捷键反复开始 / 停止，可以使用 toggle 模式：
 
 ```bash
@@ -135,6 +139,8 @@ voice2text --max-duration 10
 voice2text --provider mimo
 voice2text --toggle --toggle-key ctrl+s
 voice2text --no-trailing-space
+voice2text --version
+voice2text update
 ```
 
 CLI 和 OpenCode 插件默认共用同一个本地配置文件，也共用 `OPENCODE_VOICE2TEXT_*` 环境变量，所以凭证只需要配置一次。

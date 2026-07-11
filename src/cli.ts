@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process"
+import { readFileSync } from "node:fs"
 import {
   appendableText,
   createRuntimeConfig,
@@ -7,15 +9,29 @@ import {
   loadConfig,
   startVoiceRecognition,
 } from "./runtime.js"
+import { listProviderIds } from "./providers/index.js"
 
 const FINAL_TRANSCRIPT_TIMEOUT_MS = 30_000
 const DEFAULT_TOGGLE_KEY = "ctrl+s"
 const CTRL_C_SEQUENCE = "\u0003"
 const CTRL_S_SEQUENCE = keySequence("ctrl+s")
+const { name: CLI_PACKAGE_NAME, version: CLI_VERSION } = readPackageInfo()
+const PROVIDER_HELP: Record<string, string> = {
+  volcengine: "realtime websocket ASR with stable text while recording",
+  mimo: "upload-after-stop ASR with one final transcript after stop (auto|zh|en)",
+}
 
 type CliOptions = Record<string, unknown> & {
   toggle?: boolean
   toggleKey?: string
+}
+
+type ParsedArgs = {
+  command?: "update"
+  error?: string
+  options: CliOptions
+  showHelp: boolean
+  showVersion: boolean
 }
 
 type ActiveCliSession = {
@@ -75,38 +91,137 @@ function keySequence(key: string) {
   return key
 }
 
-function parseArgs(argv: string[]) {
+function readPackageInfo() {
+  try {
+    const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { name?: unknown; version?: unknown }
+    return {
+      name: typeof packageJson.name === "string" ? packageJson.name : "opencode-voice2text",
+      version: typeof packageJson.version === "string" ? packageJson.version : "0.0.0",
+    }
+  } catch {
+    return {
+      name: "opencode-voice2text",
+      version: "0.0.0",
+    }
+  }
+}
+
+function isOptionLike(value: string | undefined) {
+  return typeof value === "string" && value.startsWith("-")
+}
+
+function missingValue(flag: string) {
+  return `Missing value for ${flag}. Run 'voice2text --help' for usage.`
+}
+
+function unknownArgument(argument: string) {
+  return `${argument.startsWith("-") ? "Unknown option" : "Unknown argument"} '${argument}'. Run 'voice2text --help' for usage.`
+}
+
+function unsupportedUpdateArgument(argument: string) {
+  return `The update command does not accept '${argument}'. Run 'voice2text update' with no extra options.`
+}
+
+async function runSelfUpdate() {
+  const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm"
+  process.stdout.write(`Updating ${CLI_PACKAGE_NAME} from ${CLI_VERSION} with npm...\n`)
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(npmCommand, ["install", "-g", `${CLI_PACKAGE_NAME}@latest`], {
+      stdio: "inherit",
+      windowsHide: true,
+    })
+
+    child.on("error", (error: NodeJS.ErrnoException) => {
+      if (error?.code === "ENOENT") {
+        reject(new Error(`Missing npm in PATH. Update manually with: npm install -g ${CLI_PACKAGE_NAME}@latest`))
+        return
+      }
+      reject(error)
+    })
+
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve()
+        return
+      }
+      reject(new Error(`Update failed with exit code ${code ?? "unknown"}.`))
+    })
+  })
+
+  process.stdout.write("Update complete. Run 'voice2text --version' to confirm the installed version.\n")
+}
+
+function parseArgs(argv: string[]): ParsedArgs {
   const options: CliOptions = {}
+  let command: ParsedArgs["command"]
   let showHelp = false
+  let showVersion = false
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
     const next = argv[index + 1]
+
+    if (index === 0 && arg === "update") {
+      command = "update"
+      continue
+    }
+
+    if (command) {
+      if (arg === "--help" || arg === "-h") {
+        showHelp = true
+        continue
+      }
+
+      if (arg === "--version" || arg === "-v") {
+        showVersion = true
+        continue
+      }
+
+      return { command, error: unsupportedUpdateArgument(arg), options, showHelp, showVersion }
+    }
 
     if (arg === "--help" || arg === "-h") {
       showHelp = true
       continue
     }
 
-    if (arg === "--provider" && next) {
+    if (arg === "--version" || arg === "-v") {
+      showVersion = true
+      continue
+    }
+
+    if (arg === "--provider") {
+      if (!next || isOptionLike(next)) {
+        return { command, error: missingValue(arg), options, showHelp, showVersion }
+      }
       options.provider = next
       index += 1
       continue
     }
 
-    if (arg === "--language" && next) {
+    if (arg === "--language") {
+      if (!next || isOptionLike(next)) {
+        return { command, error: missingValue(arg), options, showHelp, showVersion }
+      }
       options.language = next
       index += 1
       continue
     }
 
-    if (arg === "--config" && next) {
+    if (arg === "--config") {
+      if (!next || isOptionLike(next)) {
+        return { command, error: missingValue(arg), options, showHelp, showVersion }
+      }
       options.configPath = next
       index += 1
       continue
     }
 
-    if (arg === "--max-duration" && next) {
+    if (arg === "--max-duration") {
+      if (!next || isOptionLike(next)) {
+        return { command, error: missingValue(arg), options, showHelp, showVersion }
+      }
       options.maxDurationSeconds = Number(next)
       index += 1
       continue
@@ -117,7 +232,10 @@ function parseArgs(argv: string[]) {
       continue
     }
 
-    if (arg === "--toggle-key" && next) {
+    if (arg === "--toggle-key") {
+      if (!next || isOptionLike(next)) {
+        return { command, error: missingValue(arg), options, showHelp, showVersion }
+      }
       options.toggle = true
       options.toggleKey = next
       index += 1
@@ -126,14 +244,23 @@ function parseArgs(argv: string[]) {
 
     if (arg === "--no-trailing-space") {
       options.appendTrailingSpace = false
+      continue
     }
+
+    return { command, error: unknownArgument(arg), options, showHelp, showVersion }
   }
 
-  return { options, showHelp }
+  return { command, options, showHelp, showVersion }
 }
 
 function printHelp() {
-  process.stdout.write(`Usage: voice2text [options]
+  const providers = listProviderIds()
+    .map((providerId) => `  ${providerId.padEnd(10)} ${PROVIDER_HELP[providerId] ?? ""}`)
+    .join("\n")
+
+  process.stdout.write(`Usage:
+  voice2text [options]
+  voice2text update
 
 Record microphone audio, send it to the configured ASR provider, and print recognized text to stdout.
 
@@ -148,9 +275,31 @@ Options:
   --toggle                 Wait for a hotkey and toggle recording on/off
   --toggle-key <key>       Hotkey for toggle mode, default ctrl+s
   --no-trailing-space      Do not append a trailing space after recognized text
+  -v, --version            Show the installed CLI version
   -h, --help               Show this help
 
+Commands:
+  update                   Reinstall the latest published CLI with npm
+
+Providers:
+${providers}
+
+Examples:
+  voice2text
+  voice2text --provider volcengine --language zh-CN
+  voice2text --provider mimo --language auto
+  voice2text --toggle
+  voice2text --toggle --toggle-key ctrl+g
+  voice2text --config ${displayPath(defaultConfigPath())}
+  voice2text --version
+  voice2text update
+
 Stop recording with Ctrl+C, Ctrl+S, or Enter.
+
+Notes:
+  - Unknown options fail fast instead of starting voice recognition.
+  - 'voice2text update' uses npm and may require global install permissions.
+  - On macOS/Linux, Ctrl+S may be intercepted by terminal flow control. If it does nothing, run: stty -ixon
 `)
 }
 
@@ -180,7 +329,9 @@ async function createCliSession(
         stopTimer = undefined
       }
 
-      writeStatus("\nTranscribing...\n")
+      if (!printedStableText) {
+        writeStatus("\nTranscribing...\n")
+      }
       try {
         const result = await withTimeout(
           run.stop(),
@@ -365,9 +516,24 @@ async function runToggle(config: ReturnType<typeof createRuntimeConfig>["config"
 }
 
 async function main() {
-  const { options, showHelp } = parseArgs(process.argv.slice(2))
+  const { command, error, options, showHelp, showVersion } = parseArgs(process.argv.slice(2))
+  if (error) {
+    process.stderr.write(`${error}\n`)
+    process.exit(1)
+  }
+
+  if (showVersion) {
+    process.stdout.write(`${CLI_VERSION}\n`)
+    return
+  }
+
   if (showHelp) {
     printHelp()
+    return
+  }
+
+  if (command === "update") {
+    await runSelfUpdate()
     return
   }
 
