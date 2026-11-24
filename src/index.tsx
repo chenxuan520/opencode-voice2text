@@ -1,6 +1,6 @@
-import type { PluginOptions } from "@opencode-ai/plugin"
-import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
+import type { TuiCommand, TuiPlugin, TuiPluginModule, TuiToast } from "@opencode-ai/plugin/tui"
 import type { TranscriptResult, Voice2TextConfig } from "./providers/types.js"
+import { createV2UI, type V2Context } from "./v2.js"
 import {
   appendableText,
   createRuntimeConfig,
@@ -8,22 +8,33 @@ import {
   ensureRuntimeSupport,
   loadConfig,
   startVoiceRecognition,
-  type Voice2TextOptions as RuntimeVoice2TextOptions,
+  type Voice2TextOptions,
   type VoiceRecognitionRun,
 } from "./runtime.js"
 
 const RECORDING_TOAST_DURATION = 60 * 60 * 1000
 const FINAL_TRANSCRIPT_TIMEOUT_MS = 30_000
 
-type Voice2TextOptions = PluginOptions & RuntimeVoice2TextOptions
-
-async function appendTranscript(api: TuiPluginApi, config: Voice2TextConfig, text: string) {
-  const nextText = config.appendTrailingSpace ? `${text} ` : text
-  await api.client.tui.appendPrompt({ text: nextText })
+export type PromptTarget = {
+  isCurrent: () => boolean
+  append: (text: string) => void | Promise<void>
 }
 
-function recordingToast(api: TuiPluginApi, message: string) {
-  api.ui.toast({
+export type VoiceUI = {
+  toast: (input: TuiToast) => void
+  status?: (message?: string) => void
+  capturePrompt: () => PromptTarget | undefined
+  register: (command: TuiCommand) => () => void
+}
+
+async function appendTranscript(target: PromptTarget, config: Voice2TextConfig, text: string) {
+  const nextText = config.appendTrailingSpace ? `${text} ` : text
+  await target.append(nextText)
+}
+
+function recordingToast(ui: VoiceUI, message: string) {
+  ui.status?.(message)
+  ui.toast({
     title: "Voice2Text",
     message,
     variant: "info",
@@ -31,8 +42,9 @@ function recordingToast(api: TuiPluginApi, message: string) {
   })
 }
 
-function clearToast(api: TuiPluginApi) {
-  api.ui.toast({
+function clearToast(ui: VoiceUI) {
+  ui.status?.()
+  ui.toast({
     title: "",
     message: " ",
     variant: "info",
@@ -40,24 +52,37 @@ function clearToast(api: TuiPluginApi) {
   })
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string, signal: AbortSignal) {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+    const cleanup = () => {
+      clearTimeout(timer)
+      signal.removeEventListener("abort", abort)
+    }
+    const abort = () => {
+      cleanup()
+      reject(signal.reason)
+    }
+    const timer = setTimeout(() => {
+      cleanup()
+      reject(new Error(message))
+    }, timeoutMs)
+    signal.addEventListener("abort", abort, { once: true })
+    if (signal.aborted) abort()
     promise.then(
       (value) => {
-        clearTimeout(timer)
+        cleanup()
         resolve(value)
       },
       (error) => {
-        clearTimeout(timer)
+        cleanup()
         reject(error)
       },
     )
   })
 }
 
-const tui: TuiPlugin = async (api, options) => {
-  const baseConfig = await loadConfig((options ?? {}) as Voice2TextOptions)
+async function setupVoice(ui: VoiceUI, options: Voice2TextOptions = {}) {
+  const baseConfig = await loadConfig(options)
 
   let providerError = ""
   let runtime: ReturnType<typeof createRuntimeConfig> | undefined
@@ -71,97 +96,135 @@ const tui: TuiPlugin = async (api, options) => {
   const config = runtime?.config ?? baseConfig
   const provider = runtime?.provider
 
-  let phase: "idle" | "recording" | "transcribing" = "idle"
-  let active: VoiceRecognitionRun | undefined
-  let transcribing: VoiceRecognitionRun | undefined
-  let transcribingCancelArmed = false
-  let transcribingCancelRequested = false
+  type Recording = {
+    phase: "starting" | "recording" | "transcribing" | "cancelling"
+    controller: AbortController
+    target: PromptTarget
+    run?: VoiceRecognitionRun
+    abort?: Promise<void>
+    cancelArmed: boolean
+    monitor?: ReturnType<typeof setInterval>
+  }
+  let active: Recording | undefined
+  let disposed = false
 
   const toast = (message: string, variant: "info" | "warning" | "error" = "info") => {
-    api.ui.toast({ title: "Voice2Text", message, variant, duration: 2500 })
+    ui.toast({ title: "Voice2Text", message, variant, duration: 2500 })
   }
 
-  const resetTranscribingCancelState = () => {
-    transcribingCancelArmed = false
-    transcribingCancelRequested = false
+  const finish = (current: Recording) => {
+    clearInterval(current.monitor)
+    if (active !== current) return
+    active = undefined
+    clearToast(ui)
+  }
+
+  const abortRun = (current: Recording) => {
+    return current.abort ??= current.run?.abort().catch(() => undefined) ?? Promise.resolve()
+  }
+
+  const cancel = async (current: Recording) => {
+    current.phase = "cancelling"
+    ui.status?.()
+    current.controller.abort()
+    await abortRun(current)
+    finish(current)
+  }
+
+  const isCurrent = (current: Recording) => {
+    if (disposed || active !== current || current.controller.signal.aborted) return false
+    if (current.target.isCurrent()) return true
+    void cancel(current)
+    return false
   }
 
   const startRecording = async () => {
-    if (phase !== "idle") return
+    if (active || disposed) return
+    const target = ui.capturePrompt()
+    if (!target) {
+      toast("Open a prompt before starting voice input.", "warning")
+      return
+    }
 
-    phase = "recording"
-    recordingToast(api, `Listening... press ${config.commandKeybind} to stop`)
+    const current: Recording = { phase: "starting", controller: new AbortController(), target, cancelArmed: false }
+    active = current
+    // The host has no route-change subscription. Also check synchronously before every append.
+    current.monitor = setInterval(() => { isCurrent(current) }, 50)
+    recordingToast(ui, `Listening... press ${config.commandKeybind} to stop`)
 
     try {
       await ensureRuntimeSupport()
+      if (!isCurrent(current)) return
 
       if (!provider) {
-        phase = "idle"
-        clearToast(api)
+        finish(current)
         toast(providerError || `Unsupported provider '${config.provider}'.`, "warning")
         return
       }
 
       const configError = provider.validateConfig(config)
       if (configError) {
-        phase = "idle"
-        clearToast(api)
+        finish(current)
         toast(configError, "warning")
         return
       }
 
-      active = await startVoiceRecognition(config, provider, {
+      const run = await startVoiceRecognition(config, provider, {
         onStableText: async (text: string) => {
           const next = appendableText(text)
-          if (!next) return
-          await appendTranscript(api, config, next)
+          if (!next || !isCurrent(current)) return
+          await appendTranscript(target, config, next)
         },
-      })
+      }, current.controller.signal)
+      if (!isCurrent(current)) {
+        await run.abort().catch(() => undefined)
+        return
+      }
+      current.run = run
+      current.phase = "recording"
     } catch (error) {
-      phase = "idle"
-      clearToast(api)
+      if (!isCurrent(current)) return
+      finish(current)
       toast(error instanceof Error ? error.message : String(error), "error")
     }
   }
 
   const stopRecording = async () => {
-    if (phase !== "recording" || !active) return
-
     const current = active
+    if (!current || current.phase !== "recording" || !current.run) return
+
     const finalTranscriptTimeoutMs = provider?.getFinalTranscriptTimeoutMs?.(config) ?? FINAL_TRANSCRIPT_TIMEOUT_MS
-    active = undefined
-    transcribing = current
-    resetTranscribingCancelState()
-    phase = "transcribing"
+    current.phase = "transcribing"
+    if (ui.status) recordingToast(ui, "Transcribing...")
 
     try {
       const result: TranscriptResult = await withTimeout(
-        current.stop(),
+        current.run.stop(),
         finalTranscriptTimeoutMs,
         "Timed out waiting for final transcript from the ASR provider.",
+        current.controller.signal,
       )
-      if (transcribingCancelRequested) return
+      if (!isCurrent(current)) return
 
       const tail = diffSuffix(result.stableText, appendableText(result.text))
 
       if (tail) {
-        await appendTranscript(api, config, tail)
+        await appendTranscript(current.target, config, tail)
       }
     } catch (error) {
-      await current.abort().catch(() => undefined)
-      if (!transcribingCancelRequested) {
-        clearToast(api)
+      const report = isCurrent(current)
+      current.controller.abort()
+      await abortRun(current)
+      if (report && !disposed && active === current) {
+        finish(current)
         toast(error instanceof Error ? error.message : String(error), "error")
       }
     } finally {
-      transcribing = undefined
-      resetTranscribingCancelState()
-      phase = "idle"
-      clearToast(api)
+      finish(current)
     }
   }
 
-  api.command.register(() => [
+  const unregister = ui.register(
     {
       title: "Toggle voice input",
       value: "voice2text.toggle",
@@ -170,31 +233,31 @@ const tui: TuiPlugin = async (api, options) => {
       slash: { name: "voice2text", aliases: ["voice"] },
       hidden: false,
       onSelect: () => {
-        if (phase === "transcribing") {
-          if (!transcribing) {
-            toast("Still transcribing the previous recording.", "warning")
-            return
-          }
-
-          if (transcribingCancelRequested) {
+        if (disposed) return
+        const current = active
+        if (current?.phase === "cancelling") {
+          toast("Cancelling the previous transcription...", "warning")
+          return
+        }
+        if (current && !isCurrent(current)) return
+        if (current?.phase === "transcribing") {
+          if (current.cancelArmed) {
             toast("Cancelling the previous transcription...", "warning")
+            void cancel(current)
             return
           }
 
-          if (transcribingCancelArmed) {
-            transcribingCancelArmed = false
-            transcribingCancelRequested = true
-            toast("Cancelling the previous transcription...", "warning")
-            void transcribing.abort().catch(() => undefined)
-            return
-          }
-
-          transcribingCancelArmed = true
+          current.cancelArmed = true
           toast(`Still transcribing the previous recording. Press ${config.commandKeybind} again to cancel.`, "warning")
           return
         }
 
-        if (phase === "recording") {
+        if (current?.phase === "starting") {
+          void cancel(current)
+          return
+        }
+
+        if (current?.phase === "recording") {
           void stopRecording()
           return
         }
@@ -202,17 +265,35 @@ const tui: TuiPlugin = async (api, options) => {
         void startRecording()
       },
     },
-  ])
+  )
 
-  api.lifecycle.onDispose(() => {
-    void active?.abort().catch(() => undefined)
-    void transcribing?.abort().catch(() => undefined)
-  })
+  return async () => {
+    disposed = true
+    unregister()
+    if (active) await cancel(active)
+  }
 }
 
-const plugin: TuiPluginModule = {
+const tui: TuiPlugin = async (api, options) => {
+  const cleanup = await setupVoice({
+    toast: (input) => api.ui.toast(input),
+    register: (command) => api.command.register(() => [command]),
+    capturePrompt: () => {
+      const route = JSON.stringify(api.route.current)
+      return {
+        isCurrent: () => JSON.stringify(api.route.current) === route,
+        append: async (text) => { await api.client.tui.appendPrompt({ text }) },
+      }
+    },
+  }, options)
+  api.lifecycle.onDispose(cleanup)
+  if (api.lifecycle.signal.aborted) await cleanup()
+}
+
+const plugin = {
   id: "opencode.voice2text",
   tui,
-}
+  setup: async (context: V2Context) => setupVoice(await createV2UI(context), context.options),
+} satisfies TuiPluginModule & { setup: (context: V2Context) => Promise<() => Promise<void>> }
 
 export default plugin

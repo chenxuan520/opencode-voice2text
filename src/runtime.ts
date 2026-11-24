@@ -401,15 +401,22 @@ export async function startVoiceRecognition(
   config: Voice2TextConfig,
   provider: VoiceProvider,
   callbacks: RecognitionCallbacks,
+  signal?: AbortSignal,
 ): Promise<VoiceRecognitionRun> {
+  signal?.throwIfAborted()
   await ensureRuntimeSupport()
+  signal?.throwIfAborted()
 
   const configError = provider.validateConfig(config)
   if (configError) {
     throw new Error(configError)
   }
 
-  const stream: RecognitionSession = await provider.createRecognition(config, callbacks)
+  const stream: RecognitionSession = await provider.createRecognition(config, callbacks, signal)
+  if (signal?.aborted) {
+    await stream.abort().catch(() => undefined)
+    signal.throwIfAborted()
+  }
   const session = {
     stream,
     pending: Buffer.alloc(0),
@@ -438,6 +445,7 @@ export async function startVoiceRecognition(
         stopResult = (async () => {
           session.recorder.stop()
           await session.recorder.done
+          signal?.throwIfAborted()
           const finalChunk = session.pending.length > 0 ? session.pending : undefined
           return session.stream.finish(finalChunk)
         })()

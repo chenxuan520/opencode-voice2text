@@ -171,16 +171,27 @@ class WebSocketBinaryClient {
     }
     headerLines.push("\r\n")
 
+    const onSocketData = (chunk: Buffer) => this.onData(chunk)
+    const onSocketError = (error: Error) => this.markClosed(error)
     const socket = await new Promise<tls.TLSSocket>((resolve, reject) => {
       const next = tls.connect({
         host: this.url.hostname,
         port: Number(this.url.port || 443),
         servername: this.url.hostname,
       })
+      // Own the socket before TLS completes so cancellation can destroy it.
+      this.socket = next
+      next.on("error", onSocketError)
+      next.once("close", () => {
+        next.off("data", onSocketData)
+        next.off("error", onSocketError)
+        this.markClosed(new Error("WebSocket closed"))
+      })
       const cleanup = () => {
         clearTimeout(timer)
         next.off("secureConnect", onSecureConnect)
         next.off("error", onError)
+        next.off("close", onClose)
       }
       const onSecureConnect = () => {
         cleanup()
@@ -190,6 +201,7 @@ class WebSocketBinaryClient {
         cleanup()
         reject(error)
       }
+      const onClose = () => onError(this.closedError || new Error("WebSocket closed"))
       const timer = setTimeout(() => {
         cleanup()
         next.destroy()
@@ -198,12 +210,11 @@ class WebSocketBinaryClient {
 
       next.once("secureConnect", onSecureConnect)
       next.once("error", onError)
+      next.once("close", onClose)
     })
 
-    this.socket = socket
-    this.closedError = undefined
+    if (this.closedError) throw this.closedError
     socket.setNoDelay(true)
-    socket.write(headerLines.join("\r\n"))
 
     const handshake = await new Promise<{ headerPart: string; rest: Buffer }>((resolve, reject) => {
       let chunkBuffer = Buffer.alloc(0)
@@ -211,6 +222,7 @@ class WebSocketBinaryClient {
         clearTimeout(timer)
         socket.off("data", onData)
         socket.off("error", onError)
+        socket.off("close", onClose)
       }
       const onData = (chunk: Buffer) => {
         chunkBuffer = Buffer.concat([chunkBuffer, chunk])
@@ -226,6 +238,7 @@ class WebSocketBinaryClient {
         cleanup()
         reject(error)
       }
+      const onClose = () => onError(this.closedError || new Error("WebSocket closed"))
       const timer = setTimeout(() => {
         cleanup()
         socket.destroy()
@@ -234,8 +247,11 @@ class WebSocketBinaryClient {
 
       socket.on("data", onData)
       socket.once("error", onError)
+      socket.once("close", onClose)
+      socket.write(headerLines.join("\r\n"))
     })
 
+    if (this.closedError) throw this.closedError
     const lines = handshake.headerPart.split("\r\n")
     if (!(lines[0] || "").includes("101")) {
       throw new Error(`WebSocket handshake failed: ${lines[0] || "unknown"}`)
@@ -248,9 +264,7 @@ class WebSocketBinaryClient {
       responseHeaders[line.slice(0, index).trim().toLowerCase()] = line.slice(index + 1).trim()
     }
 
-    socket.on("data", (chunk) => this.onData(chunk))
-    socket.on("close", () => this.markClosed(new Error("WebSocket closed")))
-    socket.on("error", (error) => this.markClosed(error))
+    socket.on("data", onSocketData)
     if (handshake.rest.length > 0) this.onData(handshake.rest)
     return responseHeaders
   }
@@ -333,6 +347,7 @@ class WebSocketBinaryClient {
   }
 
   sendBinary(payload: Buffer) {
+    if (this.closedError) throw this.closedError
     this.sendRaw(WS_OPCODE_BINARY, payload)
   }
 
@@ -366,35 +381,41 @@ class WebSocketBinaryClient {
     })
   }
 
-  async close() {
+  async close(immediate = false) {
     if (!this.socket) return
 
     this.markClosed(new Error("WebSocket closed"))
     this.pendingFrames = []
     this.buffer = Buffer.alloc(0)
 
-    try {
-      this.sendRaw(WS_OPCODE_CLOSE, Buffer.alloc(0))
-    } catch {
-      // Ignore close send failure.
+    if (!immediate && !this.socket.destroyed) {
+      try {
+        this.sendRaw(WS_OPCODE_CLOSE, Buffer.alloc(0))
+      } catch {
+        // Ignore close send failure.
+      }
     }
 
     const socket = this.socket
     this.socket = undefined
+    if (immediate || socket.destroyed) {
+      if (!socket.destroyed) socket.destroy()
+      return
+    }
     await new Promise<void>((resolve) => {
       let settled = false
       const finish = () => {
         if (settled) return
         settled = true
+        clearTimeout(timer)
+        socket.off("close", finish)
+        if (!socket.destroyed) socket.destroy()
         resolve()
       }
 
+      const timer = setTimeout(finish, 200)
       socket.once("close", finish)
       socket.end(() => finish())
-      setTimeout(() => {
-        socket.destroy()
-        finish()
-      }, 200)
     })
   }
 }
@@ -445,7 +466,9 @@ function getStableText(data: any) {
 async function createVolcengineRecognition(
   config: Voice2TextConfig,
   callbacks: RecognitionCallbacks,
+  signal?: AbortSignal,
 ): Promise<RecognitionSession> {
+  signal?.throwIfAborted()
   const endpoint = str(config.providerConfig.endpoint, DEFAULT_ENDPOINT)
   const appId = str(config.providerConfig.appId)
   const accessToken = str(config.providerConfig.accessToken)
@@ -461,15 +484,25 @@ async function createVolcengineRecognition(
   let lastText = ""
   let stableText = ""
   let closed = false
+  const abort = () => {
+    closed = true
+    signal?.removeEventListener("abort", onAbort)
+    return client.close(true)
+  }
+  const onAbort = () => { void abort().catch(() => undefined) }
+  signal?.addEventListener("abort", onAbort, { once: true })
 
   let responseHeaders: Record<string, string>
   try {
     responseHeaders = await client.connect()
+    signal?.throwIfAborted()
     const requestPayload = Buffer.from(JSON.stringify(buildVolcengineRequest(config)), "utf8")
     client.sendBinary(buildClientMessage(MESSAGE_TYPE_FULL_CLIENT_REQUEST, 0x0, requestPayload, SERIALIZATION_JSON))
     parseServerMessage(await client.receiveBinary())
+    signal?.throwIfAborted()
   } catch (error) {
-    await client.close().catch(() => undefined)
+    await abort().catch(() => undefined)
+    signal?.throwIfAborted()
     throw error
   }
 
@@ -505,6 +538,7 @@ async function createVolcengineRecognition(
       sendChain = sendChain.then(() => {
         client.sendBinary(buildClientMessage(MESSAGE_TYPE_AUDIO_ONLY_REQUEST, 0x0, chunk, SERIALIZATION_NONE))
       })
+      void sendChain.catch(() => undefined)
     },
     async finish(finalChunk?: Buffer) {
       if (closed) return receiveLoop
@@ -516,19 +550,16 @@ async function createVolcengineRecognition(
         })
       }
 
-      await sendChain
-      client.sendBinary(buildEmptyLastAudioMessage())
-
       try {
+        await sendChain
+        client.sendBinary(buildEmptyLastAudioMessage())
         return await receiveLoop
       } finally {
+        signal?.removeEventListener("abort", onAbort)
         await client.close()
       }
     },
-    async abort() {
-      closed = true
-      await client.close()
-    },
+    abort,
   }
 }
 
@@ -555,7 +586,7 @@ export const volcengineProvider: VoiceProvider = {
     }
     return undefined
   },
-  createRecognition(config: Voice2TextConfig, callbacks: RecognitionCallbacks) {
-    return createVolcengineRecognition(config, callbacks)
+  createRecognition(config: Voice2TextConfig, callbacks: RecognitionCallbacks, signal?: AbortSignal) {
+    return createVolcengineRecognition(config, callbacks, signal)
   },
 }

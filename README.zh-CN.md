@@ -24,7 +24,7 @@
 - 第一次按 `Ctrl+S`：开始采集麦克风音频并启动识别
 - 说话过程中：支持实时 partial 的 provider 会持续追加稳定识别文本
 - 第二次按 `Ctrl+S`：停止采集，等待 provider 返回最终结果，并补上剩余尾部文本
-- 录音期间会显示一个持续存在的 recording toast，识别停止后自动消失
+- v1、v2 都使用全局持续录音 toast；v2 同时在输入框底部显示可移除的录音/转写状态。弹窗正常遵守全局悬停和排队规则
 
 ## 为什么是切换式而不是按住说话
 
@@ -60,7 +60,7 @@ sox --version
 
 ## 安装
 
-### OpenCode 插件
+### OpenCode V1 插件
 
 推荐全局安装：
 
@@ -146,6 +146,38 @@ voice2text update
 CLI 和 OpenCode 插件默认共用同一个本地配置文件，也共用 `OPENCODE_VOICE2TEXT_*` 环境变量，所以凭证只需要配置一次。
 
 ## TUI 配置
+
+### OpenCode V2
+
+`0.1.22` 同时保留 v1 `tui(api)` 和新增 v2 `setup(context)` 入口，已验证 OpenCode `2.2.5`、`2.3.2`，并保留 v1 和独立 CLI 支持。
+
+发布后可在全局 v2 `cli.json` 中配置以下版本。使用源码时先执行 `npm run build`，再把包名替换为包目录，不要直接配置 `dist/index.js`：
+
+```json
+{
+  "plugins": [
+    {
+      "package": "opencode-voice2text@0.1.22",
+      "options": {
+        "commandKeybind": "ctrl+s",
+        "configPath": "/absolute/path/to/test-voice2text.local.json"
+      }
+    }
+  ]
+}
+```
+
+v2 使用 `plugins` 和 `{ package, options }`，不要照搬 v1 的 `plugin` 元组或下文的 `terminal_suspend` 配置。Provider 配置格式不变；验证时使用本地 fake recorder / ASR，不使用真实麦克风或在线凭证。已启动的宿主需由操作者重新加载插件或重启后才能读取修改。
+
+- 命令面板入口为 `Toggle voice input`，斜杠命令为 `/voice2text` 和 `/voice`。
+- 默认 `Ctrl+S` 开始/停止；`commandKeybind: "ctrl+g"` 可改用 `Ctrl+G`。macOS/Linux 的终端流控冲突仍可用 `stty -ixon` 排除。
+- 开始时同时显示全局 `Listening...` toast 和输入框底部的 `Voice2Text: Listening...`；停止录音后两处更新为 `Transcribing...`，最终仅追加剩余尾部，避免重复 stable 文本。转写中再按一次先提示，再按一次取消。完成或取消后移除底部状态；toast 更新与清除正常遵守全局队列，可能受悬停或前序消息影响而延后。短警告和错误也使用普通 toast。
+- v2 在当前可见 composer 的实时文本末尾追加，不覆盖识别期间手输文本或已有附件，也不会提交 prompt。
+- 启动尚未完成时再次按键会取消；切换会话、替换/销毁 composer、关闭插件会中止识别并丢弃迟到结果，已追加的 stable 文本保留。运行中每 50 ms 检查会话/composer，写入前同步复核。
+
+v2.2.5 没有公开 `ui.prompt` 或旧的 `client.tui.appendPrompt`；适配依据真实 OpenTUI composer traits 和 editor API，不伪造 v1 API。此输入框集成依赖当前宿主版本。API 源码出处、Node fake 测试及真实 TUI 验证清单见 [英文文档](./README.md#opencode-v2)。`npm test` 不会录音或请求真实 ASR，不能替代原生 TUI 验证和独立审查。
+
+### OpenCode v1
 
 安装器会默认写入一条 TUI 插件配置，其中包含：
 
@@ -474,6 +506,6 @@ npm publish
 ## 备注
 
 - 内置的火山引擎 provider 直接对接火山引擎 websocket ASR 协议
-- 故意不显示 success toast；录音状态通过持续存在的 toast 表达，停止后会自动消失
+- 故意不显示 success toast；v1、v2 都保留原来的全局录音 toast，v2 额外保留可移除的输入框底部状态
 - 错误仍然会通过 OpenCode toast 暴露出来
 - `opencode plugin ...` 会更新 `tui.json` 中的插件配置，但不会覆盖 `theme`、`keybinds` 之类无关的 TUI 设置

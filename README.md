@@ -24,7 +24,7 @@ Press the shortcut once to start recognition. Audio is always captured locally f
 - First `Ctrl+S`: start microphone capture and recognition
 - While speaking: providers with realtime partials append stable recognized text continuously to the current prompt
 - Second `Ctrl+S`: stop capture, wait for the provider's final result, then append the remaining tail text
-- A persistent recording toast stays visible while recording and disappears automatically when recognition stops
+- V1 and V2 use the global persistent recording toast. V2 also shows removable recording/transcription status in the prompt footer. Toast updates follow the host's normal hover and queue behavior.
 
 ## Why this is toggle-based
 
@@ -60,7 +60,7 @@ sox --version
 
 ## Install
 
-### OpenCode plugin
+### OpenCode V1 plugin
 
 Preferred install command:
 
@@ -146,6 +146,47 @@ voice2text update
 The CLI and OpenCode plugin use the same local config file and `OPENCODE_VOICE2TEXT_*` environment variables, so you only need to create credentials once.
 
 ## TUI config
+
+### OpenCode V2
+
+Version `0.1.22` adds a native v2 `setup(context)` entry alongside the existing v1 `tui(api)` entry. The plugin has been validated with OpenCode `2.2.5` and `2.3.2`, while retaining v1 and standalone CLI support.
+
+After installing the release, configure the global v2 `cli.json` as below. For a source checkout, run `npm run build` and replace the package name with its directory, not `dist/index.js` (v2 discovers the `./tui` export):
+
+```json
+{
+  "plugins": [
+    {
+      "package": "opencode-voice2text@0.1.22",
+      "options": {
+        "commandKeybind": "ctrl+s",
+        "configPath": "/absolute/path/to/test-voice2text.local.json"
+      }
+    }
+  ]
+}
+```
+
+V2 uses `plugins` and `{ package, options }`, not the v1 `plugin` tuple format. Do not copy the v1 `terminal_suspend` setting below into a v2 config. Provider configuration and credentials keep their existing format; for testing, use only a local fake recorder and ASR endpoint. A running host must reload the plugin or be restarted by its operator to load changed code.
+
+- Command palette: **Toggle voice input**; slash commands: `/voice2text` and `/voice`.
+- Default shortcut: `Ctrl+S`; `commandKeybind: "ctrl+g"` selects `Ctrl+G` instead. On macOS/Linux, `stty -ixon` resolves terminal flow-control interception.
+- The first shortcut shows `Listening...` in the global toast and `Voice2Text: Listening...` in the prompt footer. The next stops capture and changes both to `Transcribing...`, then appends only the final transcript tail. While waiting, one more shortcut warns and the following shortcut cancels. The footer is removed on completion/cancellation; toast updates and clearing follow the global queue and can be delayed by hover or earlier messages. Short warnings and errors also use normal toasts.
+- Realtime text is appended to the current visible composer without replacing existing text or attachments. V2 inserts at the end of the live editor, including text typed during recognition.
+- Pressing again during startup cancels startup. Switching sessions or replacing/destroying the composer cancels the run; plugin cleanup aborts it. Previously appended stable text remains, but late results are discarded. Route/composer changes are checked every 50 ms while active and synchronously before every append.
+
+V2.2.5 has no public `ui.prompt` API or client `tui.appendPrompt`. The narrow adapter uses the host renderer's visible editor marked `owner: "opencode", role: "prompt"` and OpenTUI 0.8.0 `clearSelection()` / `gotoBufferEnd()` / `insertText()`. This composer integration is version-specific and must be rechecked when upgrading OpenCode; it never submits a prompt or broadcasts an append through the server.
+
+API evidence, pinned to [v2.2.5 (`9bbb8ce`)](https://github.com/anomalyco/opencode/tree/9bbb8ce18c80f099e0e448775f59d965ead40a21):
+
+- [`plugin/src/tui/context.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/plugin/src/tui/context.ts): `ui.toast.show`, `ui.slot`, `keymap.layer`, `ui.router.current`, and `renderer`; [`plugin.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/plugin/src/tui/plugin.ts): setup returns cleanup.
+- [`tui/src/prompt/traits.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/tui/src/prompt/traits.ts) and [`component/prompt/index.tsx`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/tui/src/component/prompt/index.tsx): composer identity and `onContentChange` synchronization of text and attachment extmarks.
+- [`plugin/src/host.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/plugin/src/host.ts) and [`tui/src/config/index.tsx`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/tui/src/config/index.tsx): package-directory `./tui` resolution and v2 configuration.
+- OpenTUI 0.8.0 [`Renderable`](https://unpkg.com/@opentui/core@0.8.0/Renderable.d.ts) and [`EditBufferRenderable`](https://unpkg.com/@opentui/core@0.8.0/renderables/EditBufferRenderable.d.ts): tree traversal, visibility, destruction, and editor mutation contracts.
+
+`npm test` builds and runs Node behavior tests with fake ASR/audio against both plugin entries, plus runtime cancellation and standalone CLI regressions. It requires Node's `--experimental-test-module-mocks` support (tested with Node 25.8.2); it does not record audio or contact ASR services. These tests do not substitute for native TUI checks: verify palette/slash/key dispatch, text plus attachment preservation, recording status and error toasts, session switching, and disable/reload during startup/recording/transcription in the real host, followed by independent review. See [native test instructions](./tests/README.md).
+
+### OpenCode v1
 
 The installer writes a default TUI plugin entry for you with:
 
@@ -475,6 +516,6 @@ For emergency manual publishing, use your local npm login or a short-lived bypas
 ## Notes
 
 - The built-in Volcengine provider uses Volcengine's websocket ASR protocol directly.
-- Success toasts are intentionally not shown; recording state uses a long-lived toast that disappears after stop.
+- Success toasts are intentionally not shown; both versions use the existing long-lived recording toast, and V2 additionally uses a removable prompt-footer status.
 - Errors still surface as OpenCode toasts.
 - `opencode plugin ...` updates the plugin entry in `tui.json`, but does not replace unrelated TUI settings such as `theme` or `keybinds`.

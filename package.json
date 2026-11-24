@@ -1,6 +1,6 @@
 {
   "name": "opencode-voice2text",
-  "version": "0.1.21",
+  "version": "0.1.22",
   "description": "Provider-based speech-to-text tool for OpenCode TUI and terminal CLI",
   "type": "module",
   "license": "MIT",
@@ -48,6 +48,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --experimental-test-module-mocks --test tests/*.test.mjs",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
